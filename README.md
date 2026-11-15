@@ -38,8 +38,8 @@ MyPowerToys brings the best ideas from [Microsoft PowerToys](https://github.com/
 |--------|------------|--------|
 | **Always on Top** | Pin any window above all others | `Super+T` |
 | **Awake** | Prevent screen sleep / suspend | Tray toggle |
-| **Paste as Plain Text** | Paste without formatting | `Super+Ctrl+V` |
-| **Color Picker** | Pick any color from screen (HEX, RGB, HSL) | `Super+Shift+C` |
+| **Advanced Paste** | Paste as plain text, Markdown, JSON or a file; optional AI actions | `Super+Ctrl+V`, picker `Super+Shift+V` |
+| **Color Picker** | Pick any color from screen (HEX, RGB, HSL, Oklch, CIELAB and more) | `Super+Shift+C` |
 | **Hosts Editor** | GUI editor for `/etc/hosts` with toggle on/off | - |
 | **Bulk Rename** | Batch rename files with regex and preview | - |
 | **Image Resizer** | Batch resize images (presets + custom) | - |
@@ -48,9 +48,25 @@ MyPowerToys brings the best ideas from [Microsoft PowerToys](https://github.com/
 | **Screen Ruler** | Measure pixels on screen | `Super+Shift+R` |
 | **Text Extractor** | OCR: extract text from any screen region | `Super+Shift+T` |
 | **Shortcut Guide** | Overlay showing available keyboard shortcuts | Hold `Super` |
-| **App Launcher** | Quick app launcher with search + calculator | `Alt+Space` |
+| **App Launcher** | PowerToys Run style launcher with plugins | Set in settings |
+| **Command Palette** | Spotlight-like search: apps, calculator, web, commands | `Alt+Space` |
 | **FancyZones** | Advanced window tiling with custom zone layouts | `Super+Shift+Z` |
 | **Peek** | Quick file preview (images, text, PDF, media) | `Ctrl+Space` |
+| **Light Switch** | Switch light/dark mode on a schedule | `Super+Shift+D` |
+| **Quick Accent** | Type accented characters by holding a letter | Hold a letter |
+| **Workspaces** | Save and restore desktop app layouts | `Super+Ctrl+W` |
+| **Crop and Lock** | Crop a window into a thumbnail, reparented window or screenshot | `Super+Ctrl+Shift+T` / `R` / `S` |
+| **File Locksmith** | Find and end processes that use a file or folder | File manager menu |
+| **Environment Variables** | Edit user/system variables in `environment.d`, with profiles | - |
+| **New+** | Create files and folders from templates | File manager menu |
+| **ZoomIt** | Zoom, draw, break timer, snip and record | `Ctrl+1` ... `Ctrl+6` |
+| **Power Display** | Monitor brightness, contrast and volume (DDC/CI, backlight) | `Super+Ctrl+Shift+P`, `Super+Alt+Up/Down` |
+| **Grab and Move** | Move/resize windows with modifier + drag (X11) | `Alt`/`Super` + drag |
+| **Alt Window Cycle** | Cycle windows of the same app | ``Alt+` `` |
+| **Command Not Found** | Suggest packages for missing shell commands | Shell hook |
+
+Shortcut changes made in the settings UI take effect after restarting the daemon
+(`systemctl --user restart my-power-toys`).
 
 ## Architecture
 
@@ -61,7 +77,7 @@ my-power-toys/
 │   ├── daemon/          # Central daemon: tray icon, D-Bus, module registry
 │   ├── ui/              # Settings GUI (iced)
 │   ├── cli/             # CLI control tool (mpt-ctl)
-│   └── <modules>/       # 15 independent module crates
+│   └── <modules>/       # 28 independent module crates
 ├── assets/              # Logo, icons, .desktop files, systemd service
 └── packaging/           # Build scripts for deb, rpm, AUR
 ```
@@ -149,6 +165,7 @@ mpt-ctl list                  # List all modules and their status
 mpt-ctl start always-on-top   # Start a module
 mpt-ctl stop awake            # Stop a module
 mpt-ctl trigger color-picker  # Trigger a module's hotkey action
+mpt-ctl trigger key-manager:reload  # Run a named action (module:action)
 mpt-ctl ping                  # Check if daemon is running
 ```
 
@@ -201,12 +218,37 @@ Some modules require external tools:
 | Dependency | Used by | Install |
 |-----------|---------|---------|
 | `tesseract` | Text Extractor (OCR) | `sudo apt install tesseract-ocr` |
-| `wl-clipboard` | Paste Plain, Color Picker (Wayland) | `sudo apt install wl-clipboard` |
-| `xclip` | Paste Plain, Color Picker (X11) | `sudo apt install xclip` |
-| `xdotool` | Paste Plain, Key Manager (X11) | `sudo apt install xdotool` |
+| `wl-clipboard` | Advanced Paste, Color Picker, ZoomIt, Crop and Lock, Screen Ruler (Wayland) | `sudo apt install wl-clipboard` |
+| `xclip` | Advanced Paste, Color Picker, ZoomIt, Crop and Lock, Screen Ruler (X11) | `sudo apt install xclip` |
+| `xdotool` | Advanced Paste (X11) | `sudo apt install xdotool` |
 | `imagemagick` | Peek (image dimensions) | `sudo apt install imagemagick` |
-| `ffmpeg` | Peek (media duration) | `sudo apt install ffmpeg` |
+| `ffmpeg` | Peek (media duration), ZoomIt recording (X11) | `sudo apt install ffmpeg` |
+| `wf-recorder`, `grim` | ZoomIt recording and capture (Wayland wlroots) | `sudo apt install wf-recorder grim` |
 | `pdfinfo` | Peek (PDF preview) | `sudo apt install poppler-utils` |
+| `ddcutil` | Power Display (external monitors) | `sudo apt install ddcutil` |
+| `brightnessctl` | Power Display (laptop backlight) | `sudo apt install brightnessctl` |
+| `pkexec` | File Locksmith (other users' processes), Environment Variables (system variables) | `sudo apt install pkexec` |
+
+### Permissions
+
+- **Key Manager** reads `/dev/input/event*` and creates a virtual keyboard through
+  `/dev/uinput`. Install the udev rule (the deb, rpm and AUR packages do this) and
+  join the `input` group:
+  ```bash
+  sudo cp crates/key-manager/assets/99-mpt-uinput.rules /etc/udev/rules.d/
+  sudo usermod -aG input "$USER"
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+- **Power Display** talks to external monitors over I2C with `ddcutil`. Join the
+  `i2c` group and load `i2c-dev`: `sudo usermod -aG i2c "$USER"` and
+  `sudo modprobe i2c-dev`.
+- Log out and back in after changing groups.
+
+### File manager integration
+
+File Locksmith and New+ add entries to Nautilus, Dolphin and Thunar while the module
+is running. The daemon stops every module on shutdown, so these entries are removed
+when the daemon exits and added again when it starts.
 
 ## Development
 
@@ -214,7 +256,7 @@ Some modules require external tools:
 # Build
 cargo build
 
-# Run tests (76 tests)
+# Run tests
 cargo test
 
 # Lint
@@ -230,19 +272,20 @@ RUST_LOG=debug cargo run --bin mpt-daemon
 ## Project structure
 
 ```
-17 crates, 3 binaries, 76 tests
+32 crates, 24 binaries
 
 Binaries:
   mpt-daemon     Background daemon (tray + D-Bus + module management)
   mpt-settings   Settings GUI (iced)
   mpt-ctl        CLI control tool
+  mpt-<module>   21 module windows/overlays (egui), started by the daemon
 
 Crates:
   common         Shared library (PowerModule trait, config, hotkeys, platform)
   daemon         Central daemon
   ui             Settings UI
   cli            CLI tool
-  + 15 module crates (always-on-top, awake, paste-plain, ...)
+  + 28 module crates (always-on-top, awake, paste-plain, ...)
 ```
 
 ## Contributing

@@ -30,7 +30,20 @@ my-power-toys/
 │   ├── shortcut-guide/         # Overlay des raccourcis actifs
 │   ├── paste-plain/            # Coller en texte brut
 │   ├── peek/                   # Apercu rapide de fichiers (Quick Look)
-│   └── hosts-editor/           # Editeur /etc/hosts graphique
+│   ├── hosts-editor/           # Editeur /etc/hosts graphique
+│   ├── command-palette/        # Recherche type Spotlight
+│   ├── light-switch/           # Theme clair/sombre programme
+│   ├── quick-accent/           # Caracteres accentues
+│   ├── workspaces/             # Sauvegarde/restauration de dispositions
+│   ├── crop-and-lock/          # Recadrer une fenetre (miniature, reparent, capture)
+│   ├── file-locksmith/         # Processus qui utilisent un fichier
+│   ├── environment-variables/  # Editeur environment.d avec profils
+│   ├── new-plus/               # Nouveaux fichiers depuis des modeles
+│   ├── zoom-it/                # Zoom, dessin, minuteur, capture, enregistrement
+│   ├── power-display/          # Luminosite/contraste des ecrans (DDC/CI)
+│   ├── grab-and-move/          # Deplacer/redimensionner avec modificateur + glisser
+│   ├── alt-window-cycle/       # Alt+` entre les fenetres d'une application
+│   └── command-not-found/      # Suggestion de paquets pour les commandes absentes
 └── assets/                     # Icones, themes, ressources
 ```
 
@@ -339,6 +352,15 @@ Editeur graphique pour `/etc/hosts`.
 **Complexite : BASSE**
 
 ---
+
+### 19. Modules de parite PowerToys
+
+`command-palette`, `light-switch`, `quick-accent`, `workspaces`, `crop-and-lock`,
+`file-locksmith`, `environment-variables`, `new-plus`, `zoom-it`, `power-display`,
+`grab-and-move`, `alt-window-cycle`, `command-not-found`. Chaque crate expose sa
+structure de config (`<Module>Config`) ; l'UI settings l'utilise directement pour ne
+perdre aucun champ a l'enregistrement. Les interfaces egui sont derriere la feature
+`gui` (le daemon depend des modules avec `default-features = false`).
 
 ## Phases de Developpement
 
