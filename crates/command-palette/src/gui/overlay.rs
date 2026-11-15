@@ -99,7 +99,7 @@ impl PaletteApp {
                         }
                         if !icon_drawn {
                             ui.label(
-                                RichText::new(icon_char(&self.results[i].icon))
+                                RichText::new(icon_text(&self.results[i].icon))
                                     .size(theme::FONT_ICON)
                                     .color(theme::ACCENT),
                             );
@@ -135,7 +135,9 @@ impl PaletteApp {
                 .response;
 
             // Handle click on result row
-            if resp.interact(egui::Sense::click()).clicked() {
+            if resp.interact(egui::Sense::click()).clicked()
+                && !matches!(self.results[i].action, ResultAction::None)
+            {
                 self.selected_index = i;
                 self.engine.record_activation(&self.results[i]);
                 execute_action(&self.results[i].action);
@@ -162,6 +164,15 @@ impl eframe::App for PaletteApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition([x, y].into()));
         }
 
+        // Background providers (package search) finished: refresh results.
+        if self.engine.has_async_updates() && !self.query.trim().is_empty() {
+            self.results = self.engine.search(&self.query);
+            let count = self.results.len().min(theme::MAX_VISIBLE_RESULTS);
+            if self.selected_index >= count {
+                self.selected_index = 0;
+            }
+        }
+
         // Key handling
         let mut activate = false;
 
@@ -182,7 +193,10 @@ impl eframe::App for PaletteApp {
             }
         });
 
-        if activate && let Some(result) = self.results.get(self.selected_index) {
+        if activate
+            && let Some(result) = self.results.get(self.selected_index)
+            && !matches!(result.action, ResultAction::None)
+        {
             self.engine.record_activation(result);
             execute_action(&result.action);
             self.should_close = true;
@@ -318,6 +332,13 @@ fn icon_char(icon: &ResultIcon) -> &'static str {
     }
 }
 
+fn icon_text(icon: &ResultIcon) -> String {
+    match icon {
+        ResultIcon::Emoji(c) => c.to_string(),
+        other => icon_char(other).to_string(),
+    }
+}
+
 fn execute_action(action: &ResultAction) {
     match action {
         ResultAction::LaunchExec(cmd) => {
@@ -368,6 +389,17 @@ fn execute_action(action: &ResultAction) {
                 let _ = std::process::Command::new(program).args(rest).spawn();
             }
         }
+        ResultAction::FocusWindow(id) => {
+            if let Err(e) = crate::x11::activate_window(*id) {
+                tracing::warn!("Failed to activate window {id:#x}: {e:#}");
+            }
+        }
+        ResultAction::ClearClipboardHistory => {
+            if let Err(e) = crate::clipboard::ClipboardStore::clear_file() {
+                tracing::warn!("Failed to clear clipboard history: {e:#}");
+            }
+        }
+        ResultAction::None => {}
         ResultAction::OpenSettings(cmd) => {
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if let Some((program, args)) = parts.split_first() {

@@ -24,6 +24,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
+chrono = "0.4"
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
 egui = { workspace = true, optional = true }
 eframe = { workspace = true, optional = true }
 scopeguard = { version = "1", optional = true }
