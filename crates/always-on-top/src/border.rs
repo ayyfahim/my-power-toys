@@ -8,7 +8,8 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{self, ConnectionExt};
 use x11rb::rust_connection::RustConnection;
 
-use crate::config::{AlwaysOnTopConfig, parse_hex_color};
+use crate::config::{AlwaysOnTopConfig, gnome_accent_hex, parse_hex_color};
+use x11rb::protocol::shape;
 
 /// Commands sent from the main module to the border thread.
 pub enum BorderCmd {
@@ -17,20 +18,101 @@ pub enum BorderCmd {
     Shutdown,
 }
 
-/// The 4 border window IDs surrounding a target window.
+/// Inner corner radius of the frame when rounded corners are enabled
+/// (roughly the Windows 11 / GNOME window corner radius).
+const CORNER_RADIUS: u32 = 8;
+
+/// One shaped, click-through frame window surrounding a target window.
 struct BorderWindows {
-    top: u32,
-    bottom: u32,
-    left: u32,
-    right: u32,
+    frame: u32,
     /// Last known geometry of the target window.
     last_geom: (i32, i32, u32, u32),
 }
 
 impl BorderWindows {
-    fn all(&self) -> [u32; 4] {
-        [self.top, self.bottom, self.left, self.right]
+    fn all(&self) -> [u32; 1] {
+        [self.frame]
     }
+}
+
+/// Resolve the frame color: the desktop accent color when `frame_accent_color`
+/// is set and available (GNOME `accent-color`), else `border_color`.
+pub fn frame_color(config: &AlwaysOnTopConfig) -> String {
+    if config.frame_accent_color
+        && let Some(hex) = system_accent_color()
+    {
+        return hex.to_string();
+    }
+    config.border_color.clone()
+}
+
+fn system_accent_color() -> Option<&'static str> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "accent-color"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    gnome_accent_hex(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Rectangles + arcs that together fill a rounded rectangle.
+fn rounded_rect(
+    x: i16,
+    y: i16,
+    w: u16,
+    h: u16,
+    radius: u16,
+) -> (Vec<xproto::Rectangle>, Vec<xproto::Arc>) {
+    let r = radius.min(w / 2).min(h / 2);
+    if r == 0 {
+        return (
+            vec![xproto::Rectangle {
+                x,
+                y,
+                width: w,
+                height: h,
+            }],
+            vec![],
+        );
+    }
+    let d = r * 2;
+    let ri = r as i16;
+    let rects = vec![
+        xproto::Rectangle {
+            x: x + ri,
+            y,
+            width: w - d,
+            height: h,
+        },
+        xproto::Rectangle {
+            x,
+            y: y + ri,
+            width: w,
+            height: h - d,
+        },
+    ];
+    let right = x + (w - d) as i16;
+    let bottom = y + (h - d) as i16;
+    let arcs = [(x, y), (right, y), (x, bottom), (right, bottom)]
+        .into_iter()
+        .map(|(ax, ay)| xproto::Arc {
+            x: ax,
+            y: ay,
+            width: d,
+            height: d,
+            angle1: 0,
+            angle2: 360 * 64,
+        })
+        .collect();
+    (rects, arcs)
+}
+
+/// Frame window rectangle for a target geometry and border thickness.
+fn frame_rect((x, y, w, h): (i32, i32, u32, u32), t: u32) -> (i32, i32, u32, u32) {
+    (x - t as i32, y - t as i32, w + 2 * t, h + 2 * t)
 }
 
 struct BorderManager {
@@ -41,6 +123,7 @@ struct BorderManager {
     color_pixel: u32,
     opacity_value: u32,
     thickness: u32,
+    corner_radius: u32,
 }
 
 impl BorderManager {
@@ -51,7 +134,10 @@ impl BorderManager {
         let root = screen.root;
         let screen_depth = screen.root_depth;
 
-        let (r, g, b) = parse_hex_color(&config.border_color).unwrap_or((0, 120, 212));
+        let color = frame_color(config);
+        let (r, g, b) = parse_hex_color(&color)
+            .or_else(|| parse_hex_color(&config.border_color))
+            .unwrap_or((0, 120, 212));
         let color_pixel = (r as u32) << 16 | (g as u32) << 8 | b as u32;
 
         // _NET_WM_WINDOW_OPACITY is a 32-bit cardinal in range 0..u32::MAX
@@ -65,6 +151,11 @@ impl BorderManager {
             color_pixel,
             opacity_value,
             thickness: config.border_thickness.max(1),
+            corner_radius: if config.round_corners_enabled {
+                CORNER_RADIUS
+            } else {
+                0
+            },
         })
     }
 
@@ -99,78 +190,120 @@ impl BorderManager {
     fn create_border_windows(
         &self,
         _target: u32,
-        (x, y, w, h): (i32, i32, u32, u32),
+        geom: (i32, i32, u32, u32),
     ) -> Result<BorderWindows> {
-        let t = self.thickness;
+        let (fx, fy, fw, fh) = frame_rect(geom, self.thickness);
+        let wid = self.conn.generate_id().context("generate X11 id")?;
 
-        // Compute positions for 4 border strips
-        let positions: [(i16, i16, u16, u16); 4] = [
-            // top: spans full width including corners
-            (
-                (x - t as i32) as i16,
-                (y - t as i32) as i16,
-                (w + 2 * t) as u16,
-                t as u16,
-            ),
-            // bottom
-            (
-                (x - t as i32) as i16,
-                (y + h as i32) as i16,
-                (w + 2 * t) as u16,
-                t as u16,
-            ),
-            // left
-            ((x - t as i32) as i16, y as i16, t as u16, h as u16),
-            // right
-            ((x + w as i32) as i16, y as i16, t as u16, h as u16),
-        ];
+        let values = xproto::CreateWindowAux::new()
+            .background_pixel(self.color_pixel)
+            .override_redirect(1)
+            .event_mask(xproto::EventMask::EXPOSURE);
 
-        let mut ids = [0u32; 4];
-        for (i, &(px, py, pw, ph)) in positions.iter().enumerate() {
-            let wid = self.conn.generate_id().context("generate X11 id")?;
+        self.conn
+            .create_window(
+                self.screen_depth,
+                wid,
+                self.root,
+                fx as i16,
+                fy as i16,
+                fw.max(1) as u16,
+                fh.max(1) as u16,
+                0,
+                xproto::WindowClass::INPUT_OUTPUT,
+                0,
+                &values,
+            )
+            .context("create border window")?;
 
-            let values = xproto::CreateWindowAux::new()
-                .background_pixel(self.color_pixel)
-                .override_redirect(1)
-                .event_mask(xproto::EventMask::EXPOSURE);
+        // Clicks pass through the frame to whatever is below.
+        shape::rectangles(
+            &self.conn,
+            shape::SO::SET,
+            shape::SK::INPUT,
+            xproto::ClipOrdering::UNSORTED,
+            wid,
+            0,
+            0,
+            &[],
+        )
+        .context("set frame input shape")?;
+        self.apply_frame_shape(wid, geom)?;
 
-            self.conn
-                .create_window(
-                    self.screen_depth,
-                    wid,
-                    self.root,
-                    px,
-                    py,
-                    pw.max(1),
-                    ph.max(1),
-                    0,
-                    xproto::WindowClass::INPUT_OUTPUT,
-                    0,
-                    &values,
-                )
-                .context("create border window")?;
+        // Raise to top of stacking order
+        self.raise_window(wid)?;
 
-            // Raise to top of stacking order
-            self.raise_window(wid)?;
+        // Set opacity
+        self.set_opacity(wid)?;
 
-            // Set opacity
-            self.set_opacity(wid)?;
-
-            // Map the window
-            self.conn.map_window(wid).context("map border window")?;
-
-            ids[i] = wid;
-        }
-
+        // Map the window
+        self.conn.map_window(wid).context("map border window")?;
         self.conn.flush().context("flush after create borders")?;
 
         Ok(BorderWindows {
-            top: ids[0],
-            bottom: ids[1],
-            left: ids[2],
-            right: ids[3],
-            last_geom: (x, y, w, h),
+            frame: wid,
+            last_geom: geom,
         })
+    }
+
+    /// Shape the frame window as a (rounded) ring: outer rect minus the target area.
+    fn apply_frame_shape(&self, wid: u32, geom: (i32, i32, u32, u32)) -> Result<()> {
+        let t = self.thickness;
+        let (_, _, fw, fh) = frame_rect(geom, t);
+        let (fw, fh) = (
+            fw.clamp(1, u16::MAX as u32) as u16,
+            fh.clamp(1, u16::MAX as u32) as u16,
+        );
+        let (iw, ih) = (
+            geom.2.min(u16::MAX as u32) as u16,
+            geom.3.min(u16::MAX as u32) as u16,
+        );
+
+        let pixmap = self.conn.generate_id()?;
+        self.conn.create_pixmap(1, pixmap, wid, fw, fh)?;
+        let gc_off = self.conn.generate_id()?;
+        self.conn
+            .create_gc(gc_off, pixmap, &xproto::CreateGCAux::new().foreground(0))?;
+        let gc_on = self.conn.generate_id()?;
+        self.conn
+            .create_gc(gc_on, pixmap, &xproto::CreateGCAux::new().foreground(1))?;
+
+        self.conn.poly_fill_rectangle(
+            pixmap,
+            gc_off,
+            &[xproto::Rectangle {
+                x: 0,
+                y: 0,
+                width: fw,
+                height: fh,
+            }],
+        )?;
+        let outer_r = if self.corner_radius > 0 {
+            (self.corner_radius + t) as u16
+        } else {
+            0
+        };
+        let (rects, arcs) = rounded_rect(0, 0, fw, fh, outer_r);
+        self.conn.poly_fill_rectangle(pixmap, gc_on, &rects)?;
+        self.conn.poly_fill_arc(pixmap, gc_on, &arcs)?;
+        let (rects, arcs) = rounded_rect(t as i16, t as i16, iw, ih, self.corner_radius as u16);
+        self.conn.poly_fill_rectangle(pixmap, gc_off, &rects)?;
+        self.conn.poly_fill_arc(pixmap, gc_off, &arcs)?;
+
+        shape::mask(
+            &self.conn,
+            shape::SO::SET,
+            shape::SK::BOUNDING,
+            wid,
+            0,
+            0,
+            pixmap,
+        )
+        .context("set frame bounding shape")?;
+        self.conn.free_gc(gc_off)?;
+        self.conn.free_gc(gc_on)?;
+        self.conn.free_pixmap(pixmap)?;
+        Ok(())
     }
 
     /// Raise an override-redirect window to the top of the stacking order.
@@ -247,29 +380,20 @@ impl BorderManager {
 
             let geom_changed = bw.last_geom != geom;
 
-            let (x, y, w, h) = geom;
-            let t = self.thickness;
-
             if geom_changed {
-                let positions: [(i32, i32, u32, u32); 4] = [
-                    (x - t as i32, y - t as i32, w + 2 * t, t),
-                    (x - t as i32, y + h as i32, w + 2 * t, t),
-                    (x - t as i32, y, t, h),
-                    (x + w as i32, y, t, h),
-                ];
-
-                for (wid, &(px, py, pw, ph)) in bw.all().iter().zip(positions.iter()) {
-                    let values = xproto::ConfigureWindowAux::new()
-                        .x(px)
-                        .y(py)
-                        .width(pw.max(1))
-                        .height(ph.max(1))
-                        .stack_mode(xproto::StackMode::ABOVE);
-
-                    let _ = self.conn.configure_window(*wid, &values);
-                }
-
+                let frame = bw.frame;
                 bw.last_geom = geom;
+                let (fx, fy, fw, fh) = frame_rect(geom, self.thickness);
+                let values = xproto::ConfigureWindowAux::new()
+                    .x(fx)
+                    .y(fy)
+                    .width(fw.max(1))
+                    .height(fh.max(1))
+                    .stack_mode(xproto::StackMode::ABOVE);
+                let _ = self.conn.configure_window(frame, &values);
+                if let Err(e) = self.apply_frame_shape(frame, geom) {
+                    debug!("reshape frame for {target} failed: {e}");
+                }
             } else {
                 // Even if geometry hasn't changed, re-raise borders so they
                 // stay on top after focus/stacking changes.
@@ -341,4 +465,32 @@ pub fn spawn_border_thread(config: &AlwaysOnTopConfig) -> Result<mpsc::Sender<Bo
         .context("failed to spawn border thread")?;
 
     Ok(tx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_rect_surrounds_target() {
+        assert_eq!(frame_rect((100, 50, 800, 600), 4), (96, 46, 808, 608));
+    }
+
+    #[test]
+    fn rounded_rect_parts() {
+        let (rects, arcs) = rounded_rect(0, 0, 100, 50, 0);
+        assert_eq!(rects.len(), 1);
+        assert!(arcs.is_empty());
+
+        let (rects, arcs) = rounded_rect(2, 3, 100, 50, 10);
+        assert_eq!(rects.len(), 2);
+        assert_eq!((rects[0].x, rects[0].width), (12, 80));
+        assert_eq!((rects[1].y, rects[1].height), (13, 30));
+        assert_eq!(arcs.len(), 4);
+        assert_eq!((arcs[3].x, arcs[3].y, arcs[3].width), (82, 33, 20));
+
+        // Radius is clamped to half the smaller side.
+        let (_, arcs) = rounded_rect(0, 0, 10, 6, 50);
+        assert_eq!(arcs[0].width, 6);
+    }
 }
