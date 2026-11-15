@@ -23,8 +23,14 @@ pub struct AwakeConfig {
 
     /// When true, also prevent the display from turning off.
     /// When false, only prevent system suspend.
-    #[serde(default = "default_true")]
+    /// (Upstream `KeepDisplayOn`; `keep_display_on` is accepted as an alias.)
+    #[serde(default = "default_true", alias = "keep_display_on")]
     pub keep_screen_on: bool,
+
+    /// When the session is locked, stop keeping the display on (system
+    /// sleep stays blocked). Upstream `AllowDisplayOffWhileLocked`.
+    #[serde(default = "default_true")]
+    pub allow_display_off_while_locked: bool,
 
     /// Hours component for `Timed` mode.
     #[serde(default)]
@@ -53,9 +59,59 @@ impl Default for AwakeConfig {
         Self {
             mode: AwakeMode::default(),
             keep_screen_on: true,
+            allow_display_off_while_locked: true,
             timed_hours: 0,
             timed_minutes: default_30(),
             expire_at: String::new(),
         }
+    }
+}
+
+impl AwakeConfig {
+    /// Total duration of `Timed` mode in seconds.
+    pub fn timed_secs(&self) -> u64 {
+        u64::from(self.timed_hours) * 3600 + u64::from(self.timed_minutes) * 60
+    }
+
+    /// Parsed `expire_at` (local time), if valid.
+    pub fn expire_at_local(&self) -> Option<chrono::NaiveDateTime> {
+        let raw = self.expire_at.trim();
+        ["%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]
+            .iter()
+            .find_map(|fmt| chrono::NaiveDateTime::parse_from_str(raw, fmt).ok())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_parses() {
+        let cfg: AwakeConfig =
+            toml::from_str("mode = \"timed\"\nkeep_screen_on = false\n").unwrap();
+        assert_eq!(cfg.mode, AwakeMode::Timed);
+        assert!(!cfg.keep_screen_on);
+        assert!(cfg.allow_display_off_while_locked);
+        assert_eq!(cfg.timed_secs(), 30 * 60);
+    }
+
+    #[test]
+    fn keep_display_on_alias() {
+        let cfg: AwakeConfig = toml::from_str("keep_display_on = false\n").unwrap();
+        assert!(!cfg.keep_screen_on);
+    }
+
+    #[test]
+    fn expire_at_formats() {
+        let mut cfg = AwakeConfig {
+            expire_at: "2026-03-01T18:00".into(),
+            ..Default::default()
+        };
+        assert!(cfg.expire_at_local().is_some());
+        cfg.expire_at = "2026-03-01 18:00".into();
+        assert!(cfg.expire_at_local().is_some());
+        cfg.expire_at = "tomorrow".into();
+        assert!(cfg.expire_at_local().is_none());
     }
 }
