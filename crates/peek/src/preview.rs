@@ -12,6 +12,8 @@ pub enum FileKind {
     Audio,
     Video,
     Directory,
+    /// zip / tar / tar.gz archives (contents are listed).
+    Archive,
     Unknown,
 }
 
@@ -24,6 +26,7 @@ impl fmt::Display for FileKind {
             FileKind::Audio => write!(f, "Audio"),
             FileKind::Video => write!(f, "Video"),
             FileKind::Directory => write!(f, "Directory"),
+            FileKind::Archive => write!(f, "Archive"),
             FileKind::Unknown => write!(f, "Unknown"),
         }
     }
@@ -39,6 +42,254 @@ pub struct FilePreview {
     pub preview_text: Option<String>,
     pub dimensions: Option<(u32, u32)>,
     pub duration: Option<String>,
+    /// Archive contents (for [`FileKind::Archive`]).
+    pub archive: Option<ArchiveListing>,
+}
+
+/// One entry inside an archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveEntry {
+    pub name: String,
+    pub size: u64,
+    pub is_dir: bool,
+}
+
+/// Archive listing (possibly truncated to `max_entries`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArchiveListing {
+    pub entries: Vec<ArchiveEntry>,
+    /// Total number of entries in the archive.
+    pub total: usize,
+    /// Sum of uncompressed sizes of all entries.
+    pub total_size: u64,
+}
+
+/// How a text file should be rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextFlavor {
+    Plain,
+    Markdown,
+    /// Source code; highlight using the file extension / name.
+    Code,
+}
+
+/// Decide how to render a text file.
+pub fn text_flavor(path: &Path) -> TextFlavor {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" | "mdown" | "mkd" => TextFlavor::Markdown,
+        "txt" | "log" | "csv" | "" => {
+            if is_special_code_name(path) {
+                TextFlavor::Code
+            } else {
+                TextFlavor::Plain
+            }
+        }
+        _ => TextFlavor::Code,
+    }
+}
+
+/// Extension-less files that are still source code.
+fn is_special_code_name(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    matches!(
+        name.as_str(),
+        "makefile" | "dockerfile" | "containerfile" | "cmakelists.txt" | "pkgbuild" | "justfile"
+    )
+}
+
+fn archive_type(path: &Path) -> Option<ArchiveType> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        Some(ArchiveType::TarGz)
+    } else if name.ends_with(".tar") {
+        Some(ArchiveType::Tar)
+    } else if [
+        ".zip", ".jar", ".apk", ".epub", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".whl",
+        ".nupkg", ".cbz", ".xpi", ".war",
+    ]
+    .iter()
+    .any(|e| name.ends_with(e))
+    {
+        Some(ArchiveType::Zip)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchiveType {
+    Zip,
+    Tar,
+    TarGz,
+}
+
+/// List the contents of a zip / tar / tar.gz archive.
+pub fn list_archive(path: &Path, max_entries: usize) -> Result<ArchiveListing> {
+    let kind = archive_type(path).ok_or_else(|| anyhow!("not a supported archive"))?;
+    let file = std::fs::File::open(path)?;
+    let mut listing = ArchiveListing::default();
+    let mut push = |name: String, size: u64, is_dir: bool| {
+        listing.total += 1;
+        listing.total_size = listing.total_size.saturating_add(size);
+        if listing.entries.len() < max_entries {
+            listing.entries.push(ArchiveEntry { name, size, is_dir });
+        }
+    };
+    match kind {
+        ArchiveType::Zip => {
+            let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file))?;
+            for i in 0..zip.len() {
+                let entry = zip.by_index_raw(i)?;
+                let name = entry
+                    .name()
+                    .map(|n| n.into_owned())
+                    .unwrap_or_else(|_| String::from_utf8_lossy(entry.name_raw()).into_owned());
+                push(name, entry.size(), entry.is_dir());
+            }
+        }
+        ArchiveType::Tar | ArchiveType::TarGz => {
+            let reader: Box<dyn std::io::Read> = if kind == ArchiveType::TarGz {
+                Box::new(flate2::read::GzDecoder::new(std::io::BufReader::new(file)))
+            } else {
+                Box::new(std::io::BufReader::new(file))
+            };
+            let mut archive = tar::Archive::new(reader);
+            for entry in archive.entries()? {
+                let entry = entry?;
+                let header = entry.header();
+                let is_dir = header.entry_type().is_dir();
+                let size = header.size().unwrap_or(0);
+                let name = entry
+                    .path()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "?".into());
+                push(name, size, is_dir);
+            }
+        }
+    }
+    Ok(listing)
+}
+
+/// Is an external program available on PATH?
+pub fn tool_available(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| {
+            let p = dir.join(name);
+            p.is_file()
+        })
+    })
+}
+
+/// Where a thumbnail for `path` is cached.
+fn thumbnail_path(path: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    if let Ok(m) = std::fs::metadata(path) {
+        m.len().hash(&mut h);
+        m.modified().ok().hash(&mut h);
+    }
+    std::env::temp_dir()
+        .join("mpt-peek-thumbs")
+        .join(format!("{:016x}.png", h.finish()))
+}
+
+/// Render a PNG thumbnail for PDFs (first page, via `pdftoppm`) and videos
+/// (via `ffmpegthumbnailer` or `ffmpeg`). Returns None when the tool is
+/// missing or fails; callers fall back to metadata.
+pub fn render_thumbnail(path: &Path, kind: FileKind, max_size: u32) -> Option<PathBuf> {
+    let out = thumbnail_path(path);
+    if out.exists() {
+        return Some(out);
+    }
+    std::fs::create_dir_all(out.parent()?).ok()?;
+    let size = max_size.to_string();
+    let ok = match kind {
+        FileKind::Pdf => {
+            if !tool_available("pdftoppm") {
+                tracing::warn!("pdftoppm not found; showing PDF metadata only");
+                return None;
+            }
+            // pdftoppm appends ".png" to the output prefix with -singlefile.
+            let prefix = out.with_extension("");
+            Command::new("pdftoppm")
+                .args(["-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to"])
+                .arg(&size)
+                .arg(path)
+                .arg(&prefix)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        }
+        FileKind::Video => {
+            if tool_available("ffmpegthumbnailer") {
+                Command::new("ffmpegthumbnailer")
+                    .arg("-i")
+                    .arg(path)
+                    .arg("-o")
+                    .arg(&out)
+                    .args(["-s", &size, "-c", "png"])
+                    .output()
+                    .is_ok_and(|o| o.status.success())
+            } else if tool_available("ffmpeg") {
+                let scale = format!("scale='min({size},iw)':-2");
+                let run = |seek: bool| {
+                    let mut cmd = Command::new("ffmpeg");
+                    cmd.args(["-v", "error", "-y"]);
+                    if seek {
+                        cmd.args(["-ss", "1"]);
+                    }
+                    cmd.arg("-i")
+                        .arg(path)
+                        .args(["-frames:v", "1", "-vf", &scale])
+                        .arg(&out)
+                        .output()
+                        .is_ok_and(|o| o.status.success())
+                };
+                // Very short clips have no frame at 1s; retry from the start.
+                (run(true) && out.exists()) || run(false)
+            } else {
+                tracing::warn!("ffmpegthumbnailer/ffmpeg not found; no video thumbnail");
+                return None;
+            }
+        }
+        _ => return None,
+    };
+    (ok && out.exists()).then_some(out)
+}
+
+/// Move a file to the trash (`gio trash`, falling back to `trash-put`).
+pub fn move_to_trash(path: &Path) -> Result<()> {
+    let attempts: [(&str, &[&str]); 2] = [("gio", &["trash", "--"]), ("trash-put", &["--"])];
+    let mut last_err = None;
+    for (tool, args) in attempts {
+        if !tool_available(tool) {
+            continue;
+        }
+        match Command::new(tool).args(args).arg(path).output() {
+            Ok(o) if o.status.success() => return Ok(()),
+            Ok(o) => {
+                last_err = Some(anyhow!(
+                    "{tool} failed: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
+            }
+            Err(e) => last_err = Some(anyhow!("{tool} failed: {e}")),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("no trash tool found (install gio or trash-cli)")))
 }
 
 /// Detect what kind of file we're dealing with based on extension.
@@ -53,12 +304,26 @@ pub fn detect_kind(path: &Path) -> FileKind {
         .unwrap_or("")
         .to_lowercase();
 
+    if archive_type(path).is_some() {
+        return FileKind::Archive;
+    }
+    if is_special_code_name(path) {
+        return FileKind::Text;
+    }
+
     match ext.as_str() {
         // Text
         "txt" | "md" | "rs" | "py" | "js" | "ts" | "json" | "toml" | "yaml" | "yml" | "xml"
         | "html" | "css" | "sh" | "bash" | "zsh" | "c" | "cpp" | "h" | "hpp" | "java" | "go"
         | "rb" | "lua" | "sql" | "csv" | "log" | "conf" | "cfg" | "ini" | "env" | "dockerfile"
-        | "makefile" => FileKind::Text,
+        | "makefile" | "markdown" | "jsx" | "tsx" | "mjs" | "cjs" | "kt" | "kts" | "swift"
+        | "cs" | "php" | "pl" | "pm" | "r" | "scala" | "hs" | "ex" | "exs" | "erl" | "clj"
+        | "vue" | "svelte" | "scss" | "sass" | "less" | "diff" | "patch" | "rst" | "tex"
+        | "cmake" | "gradle" | "properties" | "nix" | "zig" | "dart" | "ps1" | "bat" | "fish"
+        | "cc" | "cxx" | "hh" | "m" | "mm" | "proto" | "graphql" | "tf" | "vim" | "el" | "lisp"
+        | "ml" | "fs" | "jl" | "nim" | "v" | "sv" | "vhd" | "asm" | "s" | "d" | "groovy"
+        | "csproj" | "sln" | "desktop" | "service" | "srt" | "tsv" | "jsonc" | "json5" | "lock"
+        | "gitignore" | "editorconfig" => FileKind::Text,
         // Images
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tiff" | "tif" => {
             FileKind::Image
@@ -96,6 +361,7 @@ pub fn generate_preview(
         preview_text: None,
         dimensions: None,
         duration: None,
+        archive: None,
     };
 
     match kind {
@@ -114,11 +380,18 @@ pub fn generate_preview(
         FileKind::Directory => {
             preview.preview_text = Some(list_directory(path, max_dir_entries)?);
         }
+        FileKind::Archive => match list_archive(path, MAX_ARCHIVE_ENTRIES) {
+            Ok(listing) => preview.archive = Some(listing),
+            Err(e) => preview.preview_text = Some(format!("Unable to read archive: {e}")),
+        },
         FileKind::Unknown => {}
     }
 
     Ok(preview)
 }
+
+/// Maximum number of archive entries listed.
+pub const MAX_ARCHIVE_ENTRIES: usize = 1000;
 
 /// Read the first N lines of a text file.
 fn read_text_preview(path: &Path, max_lines: usize) -> Result<String> {
@@ -316,6 +589,77 @@ mod tests {
         assert_eq!(format_size(1024), "1.0 KB");
         assert_eq!(format_size(1_500_000), "1.4 MB");
         assert_eq!(format_size(2_500_000_000), "2.3 GB");
+    }
+
+    #[test]
+    fn detect_archives_and_flavors() {
+        assert_eq!(detect_kind(Path::new("a.zip")), FileKind::Archive);
+        assert_eq!(detect_kind(Path::new("a.tar.gz")), FileKind::Archive);
+        assert_eq!(detect_kind(Path::new("a.TGZ")), FileKind::Archive);
+        assert_eq!(detect_kind(Path::new("a.tar")), FileKind::Archive);
+        assert_eq!(detect_kind(Path::new("Makefile")), FileKind::Text);
+        assert_eq!(text_flavor(Path::new("README.md")), TextFlavor::Markdown);
+        assert_eq!(text_flavor(Path::new("main.rs")), TextFlavor::Code);
+        assert_eq!(text_flavor(Path::new("notes.txt")), TextFlavor::Plain);
+        assert_eq!(text_flavor(Path::new("Dockerfile")), TextFlavor::Code);
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("mpt-peek-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn list_zip_archive() {
+        use std::io::Write;
+        let dir = temp_dir("zip");
+        let path = dir.join("t.zip");
+        {
+            let f = std::fs::File::create(&path).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            w.add_directory("docs/", opts).unwrap();
+            w.start_file("docs/a.txt", opts).unwrap();
+            w.write_all(b"hello").unwrap();
+            w.start_file("b.bin", opts).unwrap();
+            w.write_all(&[0u8; 10]).unwrap();
+            w.finish().unwrap();
+        }
+        let l = list_archive(&path, 2).unwrap();
+        assert_eq!(l.total, 3);
+        assert_eq!(l.total_size, 15);
+        assert_eq!(l.entries.len(), 2);
+        assert!(l.entries[0].is_dir);
+        assert_eq!(l.entries[1].name, "docs/a.txt");
+        assert_eq!(l.entries[1].size, 5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_tar_gz_archive() {
+        let dir = temp_dir("tgz");
+        let path = dir.join("t.tar.gz");
+        {
+            let f = std::fs::File::create(&path).unwrap();
+            let gz = flate2::write::GzEncoder::new(f, flate2::Compression::fast());
+            let mut b = tar::Builder::new(gz);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(4);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, "x/file.txt", &b"abcd"[..]).unwrap();
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        let p = generate_preview(&path, 10, 10).unwrap();
+        assert_eq!(p.kind, FileKind::Archive);
+        let l = p.archive.unwrap();
+        assert_eq!(l.total, 1);
+        assert_eq!(l.entries[0].name, "x/file.txt");
+        assert_eq!(l.entries[0].size, 4);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
