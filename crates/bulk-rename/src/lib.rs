@@ -2,6 +2,7 @@ pub mod config;
 #[cfg(feature = "gui")]
 pub mod gui;
 mod renamer;
+pub mod tokens;
 
 use anyhow::Result;
 use config::BulkRenameConfig;
@@ -9,7 +10,9 @@ use mpt_common::config::load_module_config;
 use mpt_common::module::PowerModule;
 use tracing::{info, warn};
 
-pub use renamer::{ListOptions, RenameOperation, RenameOptions, RenamePreview, Renamer};
+pub use renamer::{
+    ListOptions, RenameOperation, RenameOptions, RenamePreview, Renamer, TokenOptions,
+};
 
 pub struct BulkRename {
     running: bool,

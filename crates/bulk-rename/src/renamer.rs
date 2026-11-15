@@ -1,4 +1,5 @@
-use crate::config::{ApplyTo, TextFormatting};
+use crate::config::{ApplyTo, TextFormatting, TimeSource};
+use crate::tokens::{self, DateParts};
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::borrow::Cow;
@@ -19,6 +20,15 @@ pub struct RenameOptions {
     pub apply_to: ApplyTo,
     pub text_formatting: TextFormatting,
     pub enumerate: bool,
+}
+
+/// Extra token options not covered by [`RenameOptions`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenOptions {
+    /// Expand randomizer groups (`${rstringalnum=N}`, `${ruuidv4}`, ...).
+    pub randomize: bool,
+    /// Which file time feeds date/time tokens.
+    pub time_source: TimeSource,
 }
 
 /// A single rename preview entry (before → after).
@@ -58,32 +68,39 @@ impl Renamer {
     // ── Preview ──────────────────────────────────────────────────────
 
     /// Generate a preview of the rename operation without modifying anything.
+    ///
+    /// Date/time and metadata tokens are always active; randomizer groups
+    /// need [`TokenOptions::randomize`] (see [`Renamer::preview_with`]).
     pub fn preview(&self, files: &[PathBuf], opts: &RenameOptions) -> Result<Vec<RenamePreview>> {
-        // Validate regex early so we fail even on empty input.
-        if opts.use_regex && !opts.search.is_empty() {
+        self.preview_with(files, opts, &TokenOptions::default())
+    }
+
+    /// Like [`Renamer::preview`], with extra token options.
+    pub fn preview_with(
+        &self,
+        files: &[PathBuf],
+        opts: &RenameOptions,
+        tokens: &TokenOptions,
+    ) -> Result<Vec<RenamePreview>> {
+        // Validate/compile the regex once so we fail even on empty input.
+        let regex = if opts.use_regex && !opts.search.is_empty() {
             let pattern = if opts.case_sensitive {
                 opts.search.clone()
             } else {
                 format!("(?i){}", opts.search)
             };
-            Regex::new(&pattern).context("invalid regex pattern")?;
-        }
-
-        // When enumeration is active, protect ${...} tokens from the regex
-        // engine by swapping them with a placeholder before replacement.
-        let (effective_opts, enum_placeholder) = if opts.enumerate && opts.use_regex {
-            let placeholder = "\x00MPT_ENUM\x00";
-            let enum_re = Regex::new(r"\$\{[^}]*\}").unwrap();
-            let safe_replace = enum_re.replace_all(&opts.replace, placeholder).into_owned();
-            let mut eopts = opts.clone();
-            eopts.replace = safe_replace;
-            (eopts, Some(placeholder))
+            Some(Regex::new(&pattern).context("invalid regex pattern")?)
         } else {
-            (opts.clone(), None)
+            None
         };
 
+        let use_time = tokens::uses_file_time(&opts.replace);
+        let use_meta = tokens::uses_metadata(&opts.replace);
+        let use_groups = tokens::has_groups(&opts.replace, opts.enumerate, tokens.randomize);
+        let mut rng = rand::rng();
+        let mut enum_index: u64 = 0;
+
         let mut previews = Vec::with_capacity(files.len());
-        let mut counter = EnumCounter::parse(&opts.replace);
 
         for file in files {
             let filename = file
@@ -94,21 +111,38 @@ impl Renamer {
             // 1. Split into (target, rest) depending on ApplyTo.
             let (target, rest) = split_name(filename, opts.apply_to);
 
-            // 2. Search & replace on the target part.
-            let replaced = self.search_replace(&target, &effective_opts)?;
-
-            // 3. Enumerate: expand counter patterns in the replacement.
-            let replaced = if opts.enumerate {
-                // Restore the placeholder back to original enum pattern, then expand.
-                let with_patterns = if let Some(ph) = enum_placeholder {
-                    restore_enum_placeholders(&replaced, ph, &opts.replace)
+            // 2. Build this item's replacement string (date/time, metadata,
+            //    enumeration and randomizer tokens).
+            let mut replace = opts.replace.clone();
+            if use_time || use_meta {
+                let time = if use_time {
+                    file_time(file, tokens.time_source).map(DateParts::from_system_time)
                 } else {
-                    replaced
+                    None
                 };
-                counter.expand(&with_patterns)
-            } else {
-                replaced
-            };
+                let meta = if use_meta && supports_metadata(file) {
+                    Some(tokens::read_exif_patterns(file))
+                } else {
+                    None
+                };
+                replace = tokens::expand_dollar_tokens(&replace, time.as_ref(), meta.as_ref());
+            }
+            let matched = self.is_match(&target, opts, regex.as_ref());
+            if use_groups {
+                replace = tokens::expand_groups(
+                    &replace,
+                    opts.enumerate,
+                    tokens.randomize,
+                    enum_index,
+                    &mut rng,
+                );
+            }
+            if matched {
+                enum_index += 1;
+            }
+
+            // 3. Search & replace on the target part.
+            let replaced = self.search_replace(&target, opts, &replace, regex.as_ref());
 
             // 4. Reassemble.
             let new_name = join_name(&replaced, &rest, opts.apply_to);
@@ -250,45 +284,46 @@ impl Renamer {
 
     // ── Internal helpers ─────────────────────────────────────────────
 
-    /// Perform the search/replace on a single string slice.
-    fn search_replace(&self, input: &str, opts: &RenameOptions) -> Result<String> {
+    /// Does the search term occur in `input`?
+    fn is_match(&self, input: &str, opts: &RenameOptions, regex: Option<&Regex>) -> bool {
         if opts.search.is_empty() {
-            return Ok(input.to_string());
+            return false;
         }
-
-        if opts.use_regex {
-            self.search_replace_regex(input, opts)
-        } else {
-            Ok(self.search_replace_plain(input, opts))
+        match regex {
+            Some(re) => re.is_match(input),
+            None if opts.case_sensitive => input.contains(&opts.search),
+            None => input.to_lowercase().contains(&opts.search.to_lowercase()),
         }
     }
 
-    fn search_replace_regex(&self, input: &str, opts: &RenameOptions) -> Result<String> {
-        let pattern = if opts.case_sensitive {
-            opts.search.clone()
-        } else {
-            format!("(?i){}", opts.search)
-        };
-        let re = Regex::new(&pattern).context("invalid regex pattern")?;
+    /// Perform the search/replace on a single string slice.
+    fn search_replace(
+        &self,
+        input: &str,
+        opts: &RenameOptions,
+        replace: &str,
+        regex: Option<&Regex>,
+    ) -> String {
+        if opts.search.is_empty() {
+            return input.to_string();
+        }
 
-        let result = if opts.match_all {
-            re.replace_all(input, opts.replace.as_str())
-        } else {
-            re.replace(input, opts.replace.as_str())
-        };
-
-        Ok(result.into_owned())
-    }
-
-    fn search_replace_plain(&self, input: &str, opts: &RenameOptions) -> String {
-        if opts.case_sensitive {
-            if opts.match_all {
-                input.replace(&opts.search, &opts.replace)
+        if let Some(re) = regex {
+            let replace = tokens::normalize_group_refs(replace);
+            let result = if opts.match_all {
+                re.replace_all(input, replace.as_str())
             } else {
-                input.replacen(&opts.search, &opts.replace, 1)
+                re.replace(input, replace.as_str())
+            };
+            result.into_owned()
+        } else if opts.case_sensitive {
+            if opts.match_all {
+                input.replace(&opts.search, replace)
+            } else {
+                input.replacen(&opts.search, replace, 1)
             }
         } else {
-            plain_replace_case_insensitive(input, &opts.search, &opts.replace, opts.match_all)
+            plain_replace_case_insensitive(input, &opts.search, replace, opts.match_all)
         }
     }
 }
@@ -408,103 +443,25 @@ fn plain_replace_case_insensitive(
     result
 }
 
-/// Restore enum placeholders back to the original `${...}` patterns so
-/// `EnumCounter::expand` can process them.  Each placeholder occurrence
-/// is replaced with the corresponding `${...}` token from `original`.
-fn restore_enum_placeholders(text: &str, placeholder: &str, original: &str) -> String {
-    let enum_re = Regex::new(r"\$\{[^}]*\}").unwrap();
-    let tokens: Vec<&str> = enum_re.find_iter(original).map(|m| m.as_str()).collect();
-    let mut result = String::with_capacity(text.len());
-    let mut remaining = text;
-    let mut idx = 0;
-
-    while let Some(pos) = remaining.find(placeholder) {
-        result.push_str(&remaining[..pos]);
-        let token = tokens.get(idx).copied().unwrap_or("${}");
-        result.push_str(token);
-        remaining = &remaining[pos + placeholder.len()..];
-        idx += 1;
+/// Read the requested timestamp of a file.
+fn file_time(path: &Path, source: TimeSource) -> Option<std::time::SystemTime> {
+    let meta = fs::metadata(path).ok()?;
+    match source {
+        // Birth time isn't available on every filesystem; fall back to mtime.
+        TimeSource::Created => meta.created().or_else(|_| meta.modified()).ok(),
+        TimeSource::Modified => meta.modified().ok(),
+        TimeSource::Accessed => meta.accessed().ok(),
     }
-    result.push_str(remaining);
-    result
 }
 
-// ── Enumeration counter ──────────────────────────────────────────────
-
-/// Handles `${}` enumeration patterns in replacement strings.
-///
-/// Supported patterns (matching PowerRename):
-///   `${}`                          – simple 0-based counter
-///   `${start=N}`                   – counter starting at N
-///   `${increment=N}`               – step by N
-///   `${padding=N}`                 – zero-pad to N digits
-///   `${start=N;increment=M;padding=P}` – combined
-struct EnumCounter {
-    current: i64,
-    increment: i64,
-    padding: usize,
-    has_pattern: bool,
-}
-
-impl EnumCounter {
-    /// Parse the replacement string looking for `${...}` enum patterns.
-    fn parse(replacement: &str) -> Self {
-        let mut start: i64 = 0;
-        let mut increment: i64 = 1;
-        let mut padding: usize = 0;
-        let mut has_pattern = false;
-
-        // Look for ${...} pattern.
-        let re = Regex::new(r"\$\{([^}]*)\}").unwrap();
-        if re.is_match(replacement) {
-            has_pattern = true;
-            // Parse the first match to extract options.
-            if let Some(caps) = re.captures(replacement) {
-                let inner = &caps[1];
-                for part in inner.split(';') {
-                    let part = part.trim();
-                    if part.is_empty() {
-                        continue;
-                    }
-                    if let Some(v) = part.strip_prefix("start=") {
-                        start = v.trim().parse().unwrap_or(0);
-                    } else if let Some(v) = part.strip_prefix("increment=") {
-                        increment = v.trim().parse().unwrap_or(1);
-                    } else if let Some(v) = part.strip_prefix("padding=") {
-                        padding = v.trim().parse().unwrap_or(0);
-                    }
-                }
-            }
-        }
-
-        Self {
-            current: start,
-            increment,
-            padding,
-            has_pattern,
-        }
-    }
-
-    /// Expand all `${...}` patterns in the template with the current counter
-    /// value, then advance the counter.
-    fn expand(&mut self, input: &str) -> String {
-        if !self.has_pattern {
-            return input.to_string();
-        }
-
-        let formatted = if self.padding > 0 {
-            format!("{:0>width$}", self.current, width = self.padding)
-        } else {
-            self.current.to_string()
-        };
-
-        // Replace all ${...} patterns in the input.
-        let re = Regex::new(r"\$\{[^}]*\}").unwrap();
-        let result = re.replace_all(input, formatted.as_str()).into_owned();
-
-        self.current += self.increment;
-        result
-    }
+/// Upstream only reads metadata from these image types (and never folders).
+fn supports_metadata(path: &Path) -> bool {
+    !path.is_dir()
+        && path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            tokens::METADATA_EXTENSIONS
+                .iter()
+                .any(|x| x.eq_ignore_ascii_case(e))
+        })
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -825,5 +782,98 @@ mod tests {
         let previews = renamer.preview(&files, &opts).unwrap();
         // No extension → nothing to operate on → unchanged.
         assert!(!previews[0].changed);
+    }
+
+    // -- Tokens -------------------------------------------------------
+
+    fn opts(search: &str, replace: &str, use_regex: bool, enumerate: bool) -> RenameOptions {
+        RenameOptions {
+            search: search.into(),
+            replace: replace.into(),
+            use_regex,
+            match_all: true,
+            case_sensitive: true,
+            apply_to: ApplyTo::FilenameOnly,
+            text_formatting: TextFormatting::None,
+            enumerate,
+        }
+    }
+
+    #[test]
+    fn enumerate_without_regex() {
+        let renamer = Renamer::new();
+        let files = vec![
+            PathBuf::from("/tmp/photo.jpg"),
+            PathBuf::from("/tmp/other.jpg"),
+            PathBuf::from("/tmp/photo2.jpg"),
+        ];
+        let previews = renamer
+            .preview(&files, &opts("photo", "pic_${padding=2}", false, true))
+            .unwrap();
+        assert_eq!(previews[0].renamed, PathBuf::from("/tmp/pic_00.jpg"));
+        // Non-matching item doesn't consume a number.
+        assert!(!previews[1].changed);
+        assert_eq!(previews[2].renamed, PathBuf::from("/tmp/pic_012.jpg"));
+    }
+
+    #[test]
+    fn regex_group_followed_by_underscore() {
+        let renamer = Renamer::new();
+        let files = vec![PathBuf::from("/tmp/a.png")];
+        let previews = renamer
+            .preview(&files, &opts("(.*)", "$1_foo", true, false))
+            .unwrap();
+        assert_eq!(previews[0].renamed, PathBuf::from("/tmp/a_foo.png"));
+    }
+
+    #[test]
+    fn randomizer_requires_flag() {
+        let renamer = Renamer::new();
+        let files = vec![PathBuf::from("/tmp/a.txt")];
+        let o = opts("a", "${rstringdigit=4}", false, false);
+        let plain = renamer.preview(&files, &o).unwrap();
+        assert_eq!(
+            plain[0].renamed,
+            PathBuf::from("/tmp/${rstringdigit=4}.txt")
+        );
+        let tok = TokenOptions {
+            randomize: true,
+            ..Default::default()
+        };
+        let rnd = renamer.preview_with(&files, &o, &tok).unwrap();
+        let name = rnd[0]
+            .renamed
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(name.len(), 4);
+        assert!(name.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn date_tokens_from_file_time() {
+        let dir = std::env::temp_dir().join(format!("mpt-br-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("doc.txt");
+        fs::write(&file, "x").unwrap();
+        let mtime = fs::metadata(&file).unwrap().modified().unwrap();
+        let d = DateParts::from_system_time(mtime);
+        let tok = TokenOptions {
+            randomize: false,
+            time_source: TimeSource::Modified,
+        };
+        let previews = Renamer::new()
+            .preview_with(
+                std::slice::from_ref(&file),
+                &opts("doc", "$YYYY-$MM-$DD_doc", false, false),
+                &tok,
+            )
+            .unwrap();
+        let expected = format!("{:04}-{:02}-{:02}_doc.txt", d.year, d.month, d.day);
+        assert_eq!(previews[0].renamed, dir.join(expected));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

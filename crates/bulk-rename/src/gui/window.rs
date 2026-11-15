@@ -1,6 +1,8 @@
-use crate::config::{ApplyTo, BulkRenameConfig, TextFormatting};
+use crate::config::{
+    ApplyTo, BulkRenameConfig, BulkRenameState, TextFormatting, TimeSource, push_mru,
+};
 use crate::gui::theme;
-use crate::{ListOptions, RenamePreview, Renamer};
+use crate::{ListOptions, RenamePreview, Renamer, TokenOptions};
 use eframe::egui;
 use std::path::PathBuf;
 use tracing::info;
@@ -28,8 +30,13 @@ struct BulkRenameApp {
     apply_to: ApplyTo,
     text_formatting: TextFormatting,
     enumerate: bool,
+    randomize: bool,
+    time_source: TimeSource,
     include_folders: bool,
     include_subfolders: bool,
+    // Persistence
+    config: BulkRenameConfig,
+    state: BulkRenameState,
     // Preview
     renamer: Renamer,
     previews: Vec<RenamePreview>,
@@ -53,19 +60,30 @@ impl BulkRenameApp {
             .first()
             .and_then(|f| f.parent().map(|p| p.to_path_buf()));
 
+        let state = BulkRenameState::load();
+        let (search, replace) = if config.persist_state {
+            (state.search.clone(), state.replace.clone())
+        } else {
+            (String::new(), String::new())
+        };
+
         Self {
             files: initial_files,
             included,
-            search: String::new(),
-            replace: String::new(),
+            search,
+            replace,
             use_regex: config.use_regex,
             match_all: config.match_all_occurrences,
             case_sensitive: config.case_sensitive,
             apply_to: config.apply_to,
             text_formatting: config.text_formatting,
             enumerate: config.enumerate_items,
+            randomize: config.randomize_items,
+            time_source: config.time_source,
             include_folders: config.include_folders,
             include_subfolders: config.include_subfolders,
+            config,
+            state,
             renamer: Renamer::new(),
             previews: Vec::new(),
             preview_error: None,
@@ -109,7 +127,12 @@ impl BulkRenameApp {
             enumerate: self.enumerate,
         };
 
-        match self.renamer.preview(&self.files, &opts) {
+        let tokens = TokenOptions {
+            randomize: self.randomize,
+            time_source: self.time_source,
+        };
+
+        match self.renamer.preview_with(&self.files, &opts, &tokens) {
             Ok(previews) => self.previews = previews,
             Err(e) => {
                 self.preview_error = Some(e.to_string());
@@ -161,11 +184,65 @@ impl BulkRenameApp {
                 self.status = Status::Done { count };
                 // Refresh preview with new filenames
                 self.options_dirty = true;
+                self.remember_terms();
             }
             Err(e) => {
                 self.status = Status::Error(e.to_string());
             }
         }
+    }
+
+    /// Persist MRU history, last search/replace and options (upstream
+    /// `MRUEnabled` / `MaxMRUSize` / `PersistState`).
+    fn remember_terms(&mut self) {
+        if self.config.mru_enabled {
+            let max = self.config.max_mru_size;
+            push_mru(&mut self.state.search_mru, &self.search, max);
+            push_mru(&mut self.state.replace_mru, &self.replace, max);
+        }
+        if self.config.persist_state {
+            self.state.search = self.search.clone();
+            self.state.replace = self.replace.clone();
+        }
+        self.state.save();
+        self.save_options();
+    }
+
+    /// Write the current options back to the config when PersistState is on.
+    fn save_options(&mut self) {
+        if !self.config.persist_state {
+            return;
+        }
+        self.config.use_regex = self.use_regex;
+        self.config.match_all_occurrences = self.match_all;
+        self.config.case_sensitive = self.case_sensitive;
+        self.config.apply_to = self.apply_to;
+        self.config.text_formatting = self.text_formatting;
+        self.config.enumerate_items = self.enumerate;
+        self.config.randomize_items = self.randomize;
+        self.config.time_source = self.time_source;
+        if let Err(e) = mpt_common::config::save_module_config("bulk-rename", &self.config) {
+            tracing::warn!("Failed to save bulk-rename config: {e}");
+        }
+    }
+
+    /// Small "▾" button listing recent terms; picking one fills `value`.
+    fn mru_menu(ui: &mut egui::Ui, id: &str, items: &[String], value: &mut String) {
+        if items.is_empty() {
+            return;
+        }
+        ui.push_id(id, |ui| {
+            ui.menu_button("\u{25BE}", |ui| {
+                for item in items {
+                    if ui.button(item).clicked() {
+                        *value = item.clone();
+                        ui.close_menu();
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Recent");
+        });
     }
 
     fn undo_rename(&mut self) {
@@ -281,12 +358,22 @@ impl BulkRenameApp {
                         .color(theme::TEXT_SECONDARY),
                 );
                 ui.add_space(4.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.search)
-                        .desired_width(half_width)
-                        .hint_text("Pattern to find...")
-                        .font(egui::FontId::monospace(theme::FONT_BODY)),
-                );
+                ui.horizontal(|ui| {
+                    let mru_w = if self.state.search_mru.is_empty() {
+                        0.0
+                    } else {
+                        28.0
+                    };
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.search)
+                            .desired_width(half_width - mru_w)
+                            .hint_text("Pattern to find...")
+                            .font(egui::FontId::monospace(theme::FONT_BODY)),
+                    );
+                    if self.config.mru_enabled {
+                        Self::mru_menu(ui, "search_mru", &self.state.search_mru, &mut self.search);
+                    }
+                });
                 if let Some(err) = &self.preview_error {
                     ui.label(
                         egui::RichText::new(err)
@@ -307,12 +394,27 @@ impl BulkRenameApp {
                         .color(theme::TEXT_SECONDARY),
                 );
                 ui.add_space(4.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.replace)
-                        .desired_width(half_width)
-                        .hint_text("Replacement...")
-                        .font(egui::FontId::monospace(theme::FONT_BODY)),
-                );
+                ui.horizontal(|ui| {
+                    let mru_w = if self.state.replace_mru.is_empty() {
+                        0.0
+                    } else {
+                        28.0
+                    };
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.replace)
+                            .desired_width(half_width - mru_w)
+                            .hint_text("Replacement...")
+                            .font(egui::FontId::monospace(theme::FONT_BODY)),
+                    );
+                    if self.config.mru_enabled {
+                        Self::mru_menu(
+                            ui,
+                            "replace_mru",
+                            &self.state.replace_mru,
+                            &mut self.replace,
+                        );
+                    }
+                });
             });
         });
     }
@@ -325,18 +427,40 @@ impl BulkRenameApp {
             let old_match = self.match_all;
             let old_case = self.case_sensitive;
             let old_enum = self.enumerate;
+            let old_rand = self.randomize;
+            let old_time = self.time_source;
 
             Self::draw_toggle_chip(ui, "\u{2731} Regex", &mut self.use_regex);
             Self::draw_toggle_chip(ui, "Match all", &mut self.match_all);
             Self::draw_toggle_chip(ui, "Aa Case", &mut self.case_sensitive);
             Self::draw_toggle_chip(ui, "# Enumerate", &mut self.enumerate);
+            Self::draw_toggle_chip(ui, "? Randomize", &mut self.randomize);
+
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("Time:")
+                    .size(theme::FONT_SMALL)
+                    .color(theme::TEXT_MUTED),
+            );
+            Self::draw_chip_selector(
+                ui,
+                &mut self.time_source,
+                &[
+                    (TimeSource::Created, "Created"),
+                    (TimeSource::Modified, "Modified"),
+                    (TimeSource::Accessed, "Accessed"),
+                ],
+            );
 
             if self.use_regex != old_regex
                 || self.match_all != old_match
                 || self.case_sensitive != old_case
                 || self.enumerate != old_enum
+                || self.randomize != old_rand
+                || self.time_source != old_time
             {
                 self.options_dirty = true;
+                self.save_options();
             }
         });
     }
@@ -443,6 +567,7 @@ impl BulkRenameApp {
 
         if self.apply_to != old_apply || self.text_formatting != old_fmt {
             self.options_dirty = true;
+            self.save_options();
         }
     }
 
@@ -839,6 +964,71 @@ impl BulkRenameApp {
                             "${start=1;increment=2;padding=3}",
                             "Combined: 001, 003, 005...",
                         ),
+                    ] {
+                        ui.horizontal(|ui| {
+                            ui.label(mono(pattern));
+                            ui.label(desc(explanation));
+                        });
+                    }
+
+                    ui.add_space(6.0);
+
+                    // ── Randomizer ──
+                    ui.label(heading("Randomize  (enable ? Randomize)"));
+                    ui.add_space(2.0);
+                    for (pattern, explanation) in [
+                        ("${rstringalnum=9}", "9 random letters and digits"),
+                        ("${rstringalpha=13}", "13 random letters"),
+                        ("${rstringdigit=36}", "36 random digits"),
+                        ("${ruuidv4}", "Random UUID v4"),
+                    ] {
+                        ui.horizontal(|ui| {
+                            ui.label(mono(pattern));
+                            ui.label(desc(explanation));
+                        });
+                    }
+
+                    ui.add_space(6.0);
+
+                    // ── Date / time ──
+                    ui.label(heading("Date & Time  (from the selected file time)"));
+                    ui.add_space(2.0);
+                    for (pattern, explanation) in [
+                        ("$YYYY $YY $Y", "Year: 2024, 24, 4"),
+                        ("$MMMM $MMM $MM $M", "Month: March, Mar, 03, 3"),
+                        ("$DDDD $DDD $DD $D", "Day: Friday, Fri, 08, 8"),
+                        ("$hh $h", "Hour (24h): 14, 14"),
+                        ("$HH $H $TT $tt", "Hour (12h): 02, 2, PM, pm"),
+                        ("$mm $m $ss $s", "Minutes, seconds"),
+                        ("$fff $ff $f", "Milliseconds: 123, 12, 1"),
+                        ("$$", "Literal $"),
+                    ] {
+                        ui.horizontal(|ui| {
+                            ui.label(mono(pattern));
+                            ui.label(desc(explanation));
+                        });
+                    }
+
+                    ui.add_space(6.0);
+
+                    // ── Metadata ──
+                    ui.label(heading("Photo Metadata  (JPEG, PNG, TIFF, HEIC, AVIF)"));
+                    ui.add_space(2.0);
+                    for (pattern, explanation) in [
+                        ("$CAMERA_MAKE $CAMERA_MODEL $LENS", "Camera and lens"),
+                        (
+                            "$ISO $APERTURE $SHUTTER $FOCAL",
+                            "ISO 100, f/2.8, 1/250s, 50mm",
+                        ),
+                        (
+                            "$DATE_TAKEN_YYYY $DATE_TAKEN_MM $DATE_TAKEN_DD",
+                            "Date taken",
+                        ),
+                        ("$DATE_TAKEN_HH $DATE_TAKEN_mm $DATE_TAKEN_SS", "Time taken"),
+                        ("$WIDTH $HEIGHT $ORIENTATION", "Image size, orientation"),
+                        ("$AUTHOR $COPYRIGHT", "Author, copyright"),
+                        ("$LATITUDE $LONGITUDE $ALTITUDE", "GPS position"),
+                        ("$FLASH $EXPOSURE_BIAS $COLOR_SPACE", "Other EXIF fields"),
                     ] {
                         ui.horizontal(|ui| {
                             ui.label(mono(pattern));
