@@ -23,6 +23,8 @@ pub const TEXT_MUTED: Color32 = THEME.text_muted;
 pub const TEXT_ACCENT: Color32 = THEME.text_accent;
 pub const TEXT_SUCCESS: Color32 = THEME.text_success;
 pub const TEXT_ERROR: Color32 = THEME.text_error;
+/// Highlight colour for duplicate entries.
+pub const TEXT_WARNING: Color32 = Color32::from_rgb(0xE8, 0xA3, 0x3D);
 
 // -- Borders (from shared theme) --
 pub const SEPARATOR: Color32 = THEME.separator;

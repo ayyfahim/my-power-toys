@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod config;
 #[cfg(feature = "gui")]
 pub mod gui;
@@ -9,7 +10,9 @@ use mpt_common::config::load_module_config;
 use mpt_common::module::PowerModule;
 use tracing::{info, warn};
 
-pub use parser::{HostEntry, HostsFile, HostsLine};
+pub use parser::{
+    HostEntry, HostsFile, HostsLine, WriteOptions, find_duplicates, is_loopback_address,
+};
 
 pub struct HostsEditor {
     running: bool,
