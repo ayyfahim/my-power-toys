@@ -2,7 +2,8 @@ use crate::color::Color;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-const MAX_HISTORY: usize = 20;
+/// Default history size (upstream `ColorHistoryLimit` default).
+pub const MAX_HISTORY: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
@@ -27,6 +28,14 @@ impl ColorHistory {
 
     /// Add a color to history (most recent first, max 20).
     pub fn push(&mut self, color: Color) {
+        self.push_with_limit(color, MAX_HISTORY);
+    }
+
+    /// Add a color to history, keeping at most `limit` entries (minimum 1).
+    /// Re-picking a color already in history moves it to the front.
+    pub fn push_with_limit(&mut self, color: Color, limit: usize) {
+        self.entries
+            .retain(|e| (e.color.r, e.color.g, e.color.b) != (color.r, color.g, color.b));
         let entry = HistoryEntry {
             color,
             timestamp: std::time::SystemTime::now()
@@ -35,7 +44,7 @@ impl ColorHistory {
                 .unwrap_or(0),
         };
         self.entries.insert(0, entry);
-        self.entries.truncate(MAX_HISTORY);
+        self.entries.truncate(limit.max(1));
     }
 
     /// Remove color at index.
@@ -76,6 +85,19 @@ mod tests {
         assert_eq!(h.entries.len(), MAX_HISTORY);
         // Most recent should be first
         assert_eq!(h.entries[0].color.r, 24);
+    }
+
+    #[test]
+    fn custom_limit_and_dedupe() {
+        let mut h = ColorHistory::default();
+        for i in 0..10 {
+            h.push_with_limit(Color::new(i, i, i), 3);
+        }
+        assert_eq!(h.entries.len(), 3);
+        h.push_with_limit(Color::new(8, 8, 8), 3);
+        assert_eq!(h.entries.len(), 3);
+        assert_eq!(h.entries[0].color.r, 8);
+        assert_eq!(h.entries[1].color.r, 9);
     }
 
     #[test]

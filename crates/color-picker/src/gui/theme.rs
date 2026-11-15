@@ -30,8 +30,8 @@ pub const CARD_BORDER: Color32 = THEME.card_border;
 pub use mpt_common::theme::{CARD_RADIUS, FONT_BODY, FONT_BUTTON, FONT_ICON, FONT_SMALL};
 
 // ── Module-specific dimensions ─────────────────────────────────────────────
-pub const WINDOW_WIDTH: f32 = 380.0;
-pub const WINDOW_HEIGHT: f32 = 500.0;
+pub const WINDOW_WIDTH: f32 = 420.0;
+pub const WINDOW_HEIGHT: f32 = 520.0;
 pub const INNER_PADDING: f32 = 16.0;
 pub const SHADE_BAR_HEIGHT: f32 = 36.0;
 pub const CARD_HEIGHT: f32 = 48.0;
