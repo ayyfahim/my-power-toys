@@ -3500,12 +3500,24 @@ name = "mpt-app-launcher"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "base64",
+ "chrono",
  "dirs 6.0.0",
+ "eframe",
+ "egui",
+ "image 0.25.9",
  "mpt-common",
+ "resvg",
+ "scopeguard",
  "serde",
  "serde_json",
+ "sha1",
+ "sha2",
  "toml",
  "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "x11rb",
 ]
 
 [[package]]
@@ -3886,9 +3898,15 @@ name = "mpt-screen-ruler"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "eframe",
+ "egui",
+ "image 0.25.9",
  "mpt-common",
  "serde",
+ "serde_json",
+ "toml",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3968,10 +3986,17 @@ name = "mpt-zoom-it"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "chrono",
+ "dirs 6.0.0",
+ "eframe",
+ "egui",
+ "image 0.25.9",
  "mpt-common",
  "serde",
  "toml",
  "tracing",
+ "tracing-subscriber",
+ "x11rb",
 ]
 
 [[package]]
@@ -6642,6 +6667,7 @@ version = "1.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b672338555252d43fd2240c714dc444b8c6fb0a5c5335e65a07bba7742735ddb"
 dependencies = [
+ "getrandom 0.4.1",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
