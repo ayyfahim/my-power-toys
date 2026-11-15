@@ -1,6 +1,9 @@
+use crate::ImageResizerConfig;
 use crate::gui::theme;
-use crate::resizer::{OutputFormat, ResizePreset};
-use crate::{ImageResizerConfig, resize_image};
+use crate::resizer::{
+    FallbackEncoder, OutputFormat, ResizeFit, ResizeUnit, SizePreset, default_sizes,
+    resize_image_with,
+};
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -26,10 +29,10 @@ enum Status {
 
 struct ImageResizerApp {
     files: Vec<PathBuf>,
-    preset: ResizePreset,
-    custom_width: String,
-    output_format: OutputFormat,
-    quality: u8,
+    config: ImageResizerConfig,
+    /// Index into `config.sizes`; `config.sizes.len()` = custom size.
+    selected: usize,
+    editing_presets: bool,
     output_dir: Option<PathBuf>,
     status: Status,
     results: Arc<Mutex<Vec<ResizeResult>>>,
@@ -39,13 +42,22 @@ struct ImageResizerApp {
 }
 
 impl ImageResizerApp {
-    fn new(config: ImageResizerConfig) -> Self {
+    fn new(config: ImageResizerConfig, files: Vec<PathBuf>) -> Self {
+        let active = config.active_size();
+        let selected = if active.name.eq_ignore_ascii_case("custom") {
+            config.sizes.len()
+        } else {
+            config
+                .sizes
+                .iter()
+                .position(|s| s.name == active.name)
+                .unwrap_or(0)
+        };
         Self {
-            files: Vec::new(),
-            preset: config.preset,
-            custom_width: "800".into(),
-            output_format: config.output_format,
-            quality: config.quality,
+            files,
+            config,
+            selected,
+            editing_presets: false,
             output_dir: None,
             status: Status::Idle,
             results: Arc::new(Mutex::new(Vec::new())),
@@ -55,10 +67,15 @@ impl ImageResizerApp {
         }
     }
 
-    fn max_width(&self) -> u32 {
-        match self.preset {
-            ResizePreset::Custom => self.custom_width.parse().unwrap_or(800),
-            other => other.max_width(),
+    /// Write the current selection back to the config and persist it.
+    fn sync_and_save_config(&mut self) {
+        self.selected = self.selected.min(self.config.sizes.len());
+        self.config.selected_size = match self.config.sizes.get(self.selected) {
+            Some(s) => s.name.clone(),
+            None => "Custom".into(),
+        };
+        if let Err(e) = mpt_common::config::save_module_config("image-resizer", &self.config) {
+            tracing::warn!("Failed to save image-resizer config: {e}");
         }
     }
 
@@ -90,12 +107,8 @@ impl ImageResizerApp {
             return;
         }
 
-        let output_dir = self.output_dir.clone().unwrap_or_else(|| {
-            self.files
-                .first()
-                .and_then(|f| f.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(std::env::temp_dir)
-        });
+        self.sync_and_save_config();
+        let output_dir = self.output_dir.clone();
 
         self.status = Status::Resizing;
         self.total_files = self.files.len();
@@ -103,16 +116,16 @@ impl ImageResizerApp {
         self.results.lock().unwrap().clear();
 
         let files = self.files.clone();
-        let max_width = self.max_width();
-        let format = self.output_format;
-        let quality = self.quality;
+        let opts = self.config.resize_options();
         let results = self.results.clone();
         let ctx = ctx.clone();
 
         std::thread::spawn(move || {
-            std::fs::create_dir_all(&output_dir).ok();
+            if let Some(dir) = &output_dir {
+                std::fs::create_dir_all(dir).ok();
+            }
             for file in &files {
-                let result = resize_image(file, &output_dir, max_width, format, quality);
+                let result = resize_image_with(file, output_dir.as_deref(), &opts);
                 let res = ResizeResult {
                     input: file.clone(),
                     output: result.map_err(|e| e.to_string()),
@@ -577,6 +590,253 @@ impl ImageResizerApp {
     }
 }
 
+// ── Size presets & options ──────────────────────────────────────────────────
+
+const FITS: [(ResizeFit, &str); 3] = [
+    (ResizeFit::Fit, "Fit"),
+    (ResizeFit::Fill, "Fill"),
+    (ResizeFit::Stretch, "Stretch"),
+];
+
+const UNITS: [(ResizeUnit, &str); 4] = [
+    (ResizeUnit::Pixel, "Pixels"),
+    (ResizeUnit::Percent, "Percent"),
+    (ResizeUnit::Inch, "Inches"),
+    (ResizeUnit::Cm, "Centimeters"),
+];
+
+const FALLBACKS: [(FallbackEncoder, &str); 6] = [
+    (FallbackEncoder::Png, "PNG"),
+    (FallbackEncoder::Jpeg, "JPEG"),
+    (FallbackEncoder::Bmp, "BMP"),
+    (FallbackEncoder::Tiff, "TIFF"),
+    (FallbackEncoder::Gif, "GIF"),
+    (FallbackEncoder::Webp, "WebP"),
+];
+
+fn combo<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash,
+    value: &mut T,
+    options: &[(T, &str)],
+) -> bool {
+    let current = options
+        .iter()
+        .find(|(v, _)| v == value)
+        .map(|(_, l)| *l)
+        .unwrap_or("?");
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for (v, label) in options {
+                changed |= ui.selectable_value(value, *v, *label).changed();
+            }
+        });
+    changed
+}
+
+/// Inline editor for fit / width / height / unit. Returns true if changed.
+fn size_fields(ui: &mut egui::Ui, id: impl std::hash::Hash + Copy, size: &mut SizePreset) -> bool {
+    let mut changed = false;
+    changed |= combo(ui, ("fit", id), &mut size.fit, &FITS);
+    let percent_single = size.unit == ResizeUnit::Percent && size.fit != ResizeFit::Stretch;
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut size.width)
+                .range(0.0..=100_000.0)
+                .speed(1.0)
+                .max_decimals(2),
+        )
+        .on_hover_text("Width (0 = auto)")
+        .changed();
+    if !percent_single {
+        ui.label("\u{00D7}");
+        changed |= ui
+            .add(
+                egui::DragValue::new(&mut size.height)
+                    .range(0.0..=100_000.0)
+                    .speed(1.0)
+                    .max_decimals(2),
+            )
+            .on_hover_text("Height (0 = auto)")
+            .changed();
+    }
+    changed |= combo(ui, ("unit", id), &mut size.unit, &UNITS);
+    changed
+}
+
+impl ImageResizerApp {
+    fn draw_size_section(&mut self, ui: &mut egui::Ui) {
+        // Preset chips (index based; last = Custom)
+        let mut labels: Vec<(usize, String)> = self
+            .config
+            .sizes
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                (
+                    i,
+                    if s.name.is_empty() {
+                        format!("#{}", i + 1)
+                    } else {
+                        s.name.clone()
+                    },
+                )
+            })
+            .collect();
+        labels.push((self.config.sizes.len(), "Custom".into()));
+        let options: Vec<(usize, &str)> = labels.iter().map(|(i, l)| (*i, l.as_str())).collect();
+        self.selected = self.selected.min(self.config.sizes.len());
+        Self::draw_chip_selector(ui, &mut self.selected, &options);
+
+        ui.add_space(4.0);
+        if let Some(size) = self.config.sizes.get(self.selected) {
+            ui.label(
+                egui::RichText::new(size.describe())
+                    .size(theme::FONT_SMALL)
+                    .color(theme::TEXT_MUTED),
+            );
+        } else {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Custom")
+                        .size(theme::FONT_SMALL)
+                        .color(theme::TEXT_SECONDARY),
+                );
+                size_fields(ui, "custom", &mut self.config.custom_size);
+            });
+        }
+
+        ui.add_space(2.0);
+        let toggle = if self.editing_presets {
+            "Done editing presets"
+        } else {
+            "Edit presets\u{2026}"
+        };
+        if ui.small_button(toggle).clicked() {
+            if self.editing_presets {
+                self.sync_and_save_config();
+            }
+            self.editing_presets = !self.editing_presets;
+        }
+
+        if self.editing_presets {
+            let mut remove = None;
+            let mut swap_up = None;
+            egui::Frame::NONE
+                .fill(theme::BG_CARD)
+                .corner_radius(theme::CARD_RADIUS)
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    let count = self.config.sizes.len();
+                    for (i, size) in self.config.sizes.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut size.name)
+                                    .desired_width(90.0)
+                                    .hint_text("Name"),
+                            );
+                            size_fields(ui, ("preset", i), size);
+                            if i > 0
+                                && ui
+                                    .small_button("\u{2191}")
+                                    .on_hover_text("Move up")
+                                    .clicked()
+                            {
+                                swap_up = Some(i);
+                            }
+                            if count > 1
+                                && ui
+                                    .small_button("\u{2715}")
+                                    .on_hover_text("Remove")
+                                    .clicked()
+                            {
+                                remove = Some(i);
+                            }
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.small_button("+ Add preset").clicked() {
+                            let n = self.config.sizes.len() + 1;
+                            self.config.sizes.push(SizePreset::new(
+                                &format!("Preset {n}"),
+                                ResizeFit::Fit,
+                                1024.0,
+                                768.0,
+                                ResizeUnit::Pixel,
+                            ));
+                        }
+                        if ui.small_button("Reset to defaults").clicked() {
+                            self.config.sizes = default_sizes();
+                            self.selected = 0;
+                        }
+                    });
+                });
+            if let Some(i) = swap_up {
+                self.config.sizes.swap(i, i - 1);
+                if self.selected == i {
+                    self.selected = i - 1;
+                } else if self.selected == i - 1 {
+                    self.selected = i;
+                }
+            }
+            if let Some(i) = remove {
+                self.config.sizes.remove(i);
+                if self.selected > i || self.selected >= self.config.sizes.len() {
+                    self.selected = self.selected.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    fn draw_options_section(&mut self, ui: &mut egui::Ui) {
+        Self::draw_section_label(ui, "OPTIONS");
+        ui.add_space(4.0);
+        let cfg = &mut self.config;
+        ui.checkbox(&mut cfg.shrink_only, "Make pictures smaller but not larger");
+        ui.checkbox(&mut cfg.replace, "Overwrite files (replace originals)");
+        ui.checkbox(
+            &mut cfg.ignore_orientation,
+            "Ignore the orientation of pictures",
+        )
+        .on_hover_text(
+            "Swap width and height when the picture and the size have different orientations",
+        );
+        ui.checkbox(
+            &mut cfg.keep_date_modified,
+            "Keep the original modified date",
+        );
+        ui.add_enabled_ui(!cfg.replace, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("File name")
+                        .size(theme::FONT_SMALL)
+                        .color(theme::TEXT_SECONDARY),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut cfg.file_name_template)
+                        .desired_width(160.0)
+                        .hint_text("%1 (%2)"),
+                )
+                .on_hover_text(
+                    "%1 original name, %2 size name, %3 selected width, %4 selected height, \
+                     %5 actual width, %6 actual height",
+                );
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Fallback encoder")
+                    .size(theme::FONT_SMALL)
+                    .color(theme::TEXT_SECONDARY),
+            )
+            .on_hover_text("Used when the original format can't be written");
+            combo(ui, "fallback", &mut cfg.fallback_encoder, &FALLBACKS);
+        });
+    }
+}
+
 // ── eframe::App ─────────────────────────────────────────────────────────────
 
 impl eframe::App for ImageResizerApp {
@@ -628,172 +888,38 @@ impl eframe::App for ImageResizerApp {
                         theme::INNER_MARGIN as i8,
                     ))
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 6.0;
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 6.0;
 
-                        // ── Files section ───────────────────────────
-                        ui.horizontal(|ui| {
-                            Self::draw_section_label(ui, "IMAGES");
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "{} file{}",
-                                            self.files.len(),
-                                            if self.files.len() != 1 { "s" } else { "" }
-                                        ))
-                                        .size(theme::FONT_SMALL)
-                                        .color(theme::TEXT_MUTED),
+                                // ── Files section ───────────────────────────
+                                ui.horizontal(|ui| {
+                                    Self::draw_section_label(ui, "IMAGES");
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} file{}",
+                                                    self.files.len(),
+                                                    if self.files.len() != 1 { "s" } else { "" }
+                                                ))
+                                                .size(theme::FONT_SMALL)
+                                                .color(theme::TEXT_MUTED),
+                                            );
+                                        },
                                     );
-                                },
-                            );
-                        });
-                        ui.add_space(2.0);
+                                });
+                                ui.add_space(2.0);
 
-                        self.draw_drop_zone(ui);
-                        ui.add_space(2.0);
+                                self.draw_drop_zone(ui);
+                                ui.add_space(2.0);
 
-                        // File action buttons
-                        ui.horizontal(|ui| {
-                            let (btn_rect, btn_resp) = ui
-                                .allocate_exact_size(egui::vec2(100.0, 28.0), egui::Sense::click());
-                            let p = ui.painter_at(btn_rect);
-                            let bg = if btn_resp.hovered() {
-                                theme::BG_HOVER
-                            } else {
-                                theme::BG_CHIP
-                            };
-                            p.rect_filled(btn_rect, 5.0, bg);
-                            p.text(
-                                btn_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "+  Add files",
-                                egui::FontId::proportional(theme::FONT_SMALL),
-                                theme::TEXT_PRIMARY,
-                            );
-                            if btn_resp.clicked() {
-                                self.add_files_dialog();
-                            }
-
-                            if !self.files.is_empty() {
-                                let (clr_rect, clr_resp) = ui.allocate_exact_size(
-                                    egui::vec2(75.0, 28.0),
-                                    egui::Sense::click(),
-                                );
-                                let p = ui.painter_at(clr_rect);
-                                let bg = if clr_resp.hovered() {
-                                    theme::BG_HOVER
-                                } else {
-                                    theme::BG_CHIP
-                                };
-                                p.rect_filled(clr_rect, 5.0, bg);
-                                p.text(
-                                    clr_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "Clear all",
-                                    egui::FontId::proportional(theme::FONT_SMALL),
-                                    theme::TEXT_MUTED,
-                                );
-                                if clr_resp.clicked() {
-                                    self.files.clear();
-                                }
-                            }
-                        });
-
-                        ui.add_space(theme::SECTION_SPACING);
-
-                        // Separator
-                        let (sep_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), 1.0),
-                            egui::Sense::hover(),
-                        );
-                        ui.painter_at(sep_rect)
-                            .rect_filled(sep_rect, 0.0, theme::SEPARATOR);
-
-                        ui.add_space(theme::SECTION_SPACING);
-
-                        // ── Size Preset ─────────────────────────────
-                        Self::draw_section_label(ui, "SIZE PRESET");
-                        ui.add_space(4.0);
-
-                        Self::draw_chip_selector(
-                            ui,
-                            &mut self.preset,
-                            &[
-                                (ResizePreset::Small, "Small  640"),
-                                (ResizePreset::Medium, "Medium  1280"),
-                                (ResizePreset::Large, "Large  1920"),
-                                (ResizePreset::Phone, "Phone  1080"),
-                                (ResizePreset::Custom, "Custom"),
-                            ],
-                        );
-
-                        if self.preset == ResizePreset::Custom {
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("Max width (px)")
-                                        .size(theme::FONT_SMALL)
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-                                let response = ui.add(
-                                    egui::TextEdit::singleline(&mut self.custom_width)
-                                        .desired_width(80.0)
-                                        .char_limit(5)
-                                        .font(egui::FontId::monospace(theme::FONT_BODY)),
-                                );
-                                // Filter to digits only
-                                if response.changed() {
-                                    self.custom_width.retain(|c| c.is_ascii_digit());
-                                }
-                            });
-                        }
-
-                        ui.add_space(theme::SECTION_SPACING);
-
-                        // ── Output Format ───────────────────────────
-                        Self::draw_section_label(ui, "OUTPUT FORMAT");
-                        ui.add_space(4.0);
-
-                        Self::draw_chip_selector(
-                            ui,
-                            &mut self.output_format,
-                            &[
-                                (OutputFormat::Original, "Original"),
-                                (OutputFormat::Png, "PNG"),
-                                (OutputFormat::Jpeg, "JPEG"),
-                                (OutputFormat::Webp, "WebP"),
-                            ],
-                        );
-
-                        // ── Quality slider (JPEG only) ──────────────
-                        if self.output_format == OutputFormat::Jpeg {
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("Quality")
-                                        .size(theme::FONT_SMALL)
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-                                let mut q = self.quality as f32;
-                                let slider =
-                                    egui::Slider::new(&mut q, 1.0..=100.0).integer().suffix("%");
-                                if ui.add(slider).changed() {
-                                    self.quality = q as u8;
-                                }
-                            });
-                        }
-
-                        ui.add_space(theme::SECTION_SPACING);
-
-                        // ── Output directory ────────────────────────
-                        ui.horizontal(|ui| {
-                            Self::draw_section_label(ui, "OUTPUT");
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
+                                // File action buttons
+                                ui.horizontal(|ui| {
                                     let (btn_rect, btn_resp) = ui.allocate_exact_size(
-                                        egui::vec2(65.0, 22.0),
+                                        egui::vec2(100.0, 28.0),
                                         egui::Sense::click(),
                                     );
                                     let p = ui.painter_at(btn_rect);
@@ -802,65 +928,189 @@ impl eframe::App for ImageResizerApp {
                                     } else {
                                         theme::BG_CHIP
                                     };
-                                    p.rect_filled(btn_rect, 4.0, bg);
+                                    p.rect_filled(btn_rect, 5.0, bg);
                                     p.text(
                                         btn_rect.center(),
                                         egui::Align2::CENTER_CENTER,
-                                        "Change",
+                                        "+  Add files",
                                         egui::FontId::proportional(theme::FONT_SMALL),
-                                        theme::TEXT_ACCENT,
+                                        theme::TEXT_PRIMARY,
                                     );
                                     if btn_resp.clicked() {
-                                        self.pick_output_dir();
+                                        self.add_files_dialog();
                                     }
-                                },
-                            );
-                        });
 
-                        let dir_label = self
-                            .output_dir
-                            .as_ref()
-                            .map(|d| {
-                                let s = d.display().to_string();
-                                if s.len() > 50 {
-                                    format!("...{}", &s[s.len() - 47..])
-                                } else {
-                                    s
+                                    if !self.files.is_empty() {
+                                        let (clr_rect, clr_resp) = ui.allocate_exact_size(
+                                            egui::vec2(75.0, 28.0),
+                                            egui::Sense::click(),
+                                        );
+                                        let p = ui.painter_at(clr_rect);
+                                        let bg = if clr_resp.hovered() {
+                                            theme::BG_HOVER
+                                        } else {
+                                            theme::BG_CHIP
+                                        };
+                                        p.rect_filled(clr_rect, 5.0, bg);
+                                        p.text(
+                                            clr_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "Clear all",
+                                            egui::FontId::proportional(theme::FONT_SMALL),
+                                            theme::TEXT_MUTED,
+                                        );
+                                        if clr_resp.clicked() {
+                                            self.files.clear();
+                                        }
+                                    }
+                                });
+
+                                ui.add_space(theme::SECTION_SPACING);
+
+                                // Separator
+                                let (sep_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), 1.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter_at(sep_rect).rect_filled(
+                                    sep_rect,
+                                    0.0,
+                                    theme::SEPARATOR,
+                                );
+
+                                ui.add_space(theme::SECTION_SPACING);
+
+                                // ── Size Preset ─────────────────────────────
+                                Self::draw_section_label(ui, "SIZE PRESET");
+                                ui.add_space(4.0);
+
+                                self.draw_size_section(ui);
+                                ui.add_space(theme::SECTION_SPACING);
+
+                                // ── Output Format ───────────────────────────
+                                Self::draw_section_label(ui, "OUTPUT FORMAT");
+                                ui.add_space(4.0);
+
+                                Self::draw_chip_selector(
+                                    ui,
+                                    &mut self.config.output_format,
+                                    &[
+                                        (OutputFormat::Original, "Original"),
+                                        (OutputFormat::Png, "PNG"),
+                                        (OutputFormat::Jpeg, "JPEG"),
+                                        (OutputFormat::Webp, "WebP"),
+                                    ],
+                                );
+
+                                // ── Quality slider (JPEG only) ──────────────
+                                if self.config.output_format == OutputFormat::Jpeg {
+                                    ui.add_space(6.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("Quality")
+                                                .size(theme::FONT_SMALL)
+                                                .color(theme::TEXT_SECONDARY),
+                                        );
+                                        let mut q = self.config.quality as f32;
+                                        let slider = egui::Slider::new(&mut q, 1.0..=100.0)
+                                            .integer()
+                                            .suffix("%");
+                                        if ui.add(slider).changed() {
+                                            self.config.quality = q as u8;
+                                        }
+                                    });
                                 }
-                            })
-                            .unwrap_or_else(|| "Same as source folder".into());
-                        ui.label(
-                            egui::RichText::new(dir_label)
-                                .size(theme::FONT_SMALL)
-                                .color(theme::TEXT_MUTED),
-                        );
 
-                        ui.add_space(theme::SECTION_SPACING);
+                                ui.add_space(theme::SECTION_SPACING);
 
-                        // ── Action area ─────────────────────────────
-                        match &self.status {
-                            Status::Idle => {
-                                let has_files = !self.files.is_empty();
-                                let label = if has_files {
-                                    format!(
-                                        "Resize {} image{}",
-                                        self.files.len(),
-                                        if self.files.len() != 1 { "s" } else { "" }
-                                    )
+                                // ── Options ─────────────────────────────────
+                                self.draw_options_section(ui);
+
+                                ui.add_space(theme::SECTION_SPACING);
+
+                                // ── Output directory ────────────────────────
+                                ui.horizontal(|ui| {
+                                    Self::draw_section_label(ui, "OUTPUT");
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            let (btn_rect, btn_resp) = ui.allocate_exact_size(
+                                                egui::vec2(65.0, 22.0),
+                                                egui::Sense::click(),
+                                            );
+                                            let p = ui.painter_at(btn_rect);
+                                            let bg = if btn_resp.hovered() {
+                                                theme::BG_HOVER
+                                            } else {
+                                                theme::BG_CHIP
+                                            };
+                                            p.rect_filled(btn_rect, 4.0, bg);
+                                            p.text(
+                                                btn_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "Change",
+                                                egui::FontId::proportional(theme::FONT_SMALL),
+                                                theme::TEXT_ACCENT,
+                                            );
+                                            if btn_resp.clicked() {
+                                                self.pick_output_dir();
+                                            }
+                                        },
+                                    );
+                                });
+
+                                let dir_label = self
+                                    .output_dir
+                                    .as_ref()
+                                    .map(|d| {
+                                        let s = d.display().to_string();
+                                        if s.len() > 50 {
+                                            format!("...{}", &s[s.len() - 47..])
+                                        } else {
+                                            s
+                                        }
+                                    })
+                                    .unwrap_or_else(|| "Same as source folder".into());
+                                let dir_label = if self.config.replace {
+                                    "Originals are overwritten".to_string()
                                 } else {
-                                    "Resize".into()
+                                    dir_label
                                 };
-                                if Self::draw_action_button(ui, &label, "\u{25B6}", has_files) {
-                                    self.start_resize(ctx);
+                                ui.label(
+                                    egui::RichText::new(dir_label)
+                                        .size(theme::FONT_SMALL)
+                                        .color(theme::TEXT_MUTED),
+                                );
+
+                                ui.add_space(theme::SECTION_SPACING);
+
+                                // ── Action area ─────────────────────────────
+                                match &self.status {
+                                    Status::Idle => {
+                                        let has_files = !self.files.is_empty();
+                                        let label = if has_files {
+                                            format!(
+                                                "Resize {} image{}",
+                                                self.files.len(),
+                                                if self.files.len() != 1 { "s" } else { "" }
+                                            )
+                                        } else {
+                                            "Resize".into()
+                                        };
+                                        if Self::draw_action_button(
+                                            ui, &label, "\u{25B6}", has_files,
+                                        ) {
+                                            self.start_resize(ctx);
+                                        }
+                                    }
+                                    Status::Resizing => {
+                                        self.draw_progress_bar(ui);
+                                    }
+                                    Status::Done => {
+                                        self.draw_results(ui);
+                                    }
                                 }
-                            }
-                            Status::Resizing => {
-                                self.draw_progress_bar(ui);
-                            }
-                            Status::Done => {
-                                self.draw_results(ui);
-                            }
-                        }
+                            });
                     });
             });
 
@@ -873,7 +1123,7 @@ impl eframe::App for ImageResizerApp {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run_window(config: ImageResizerConfig) {
+pub fn run_window(config: ImageResizerConfig, files: Vec<PathBuf>) {
     info!("Opening Image Resizer window");
 
     let options = eframe::NativeOptions {
@@ -890,7 +1140,7 @@ pub fn run_window(config: ImageResizerConfig) {
         options,
         Box::new(|cc| {
             setup_visuals(&cc.egui_ctx);
-            Ok(Box::new(ImageResizerApp::new(config)))
+            Ok(Box::new(ImageResizerApp::new(config, files)))
         }),
     )
     .ok();

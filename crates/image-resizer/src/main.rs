@@ -40,11 +40,20 @@ fn main() {
         mpt_common::config::load_module_config("image-resizer").unwrap_or_default();
 
     info!(
-        "Image Resizer GUI starting (preset={:?}, format={:?}, quality={})",
-        config.preset, config.output_format, config.quality
+        "Image Resizer GUI starting (size={:?}, format={:?}, quality={})",
+        config.active_size().name,
+        config.output_format,
+        config.quality
     );
 
-    mpt_image_resizer::gui::window::run_window(config);
+    // Files passed on the command line (e.g. from a file manager action).
+    let files: Vec<PathBuf> = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .collect();
+
+    mpt_image_resizer::gui::window::run_window(config, files);
 }
 
 fn lock_file_path() -> PathBuf {
