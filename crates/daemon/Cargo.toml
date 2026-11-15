@@ -30,6 +30,15 @@ mpt-command-palette = { path = "../command-palette", default-features = false }
 mpt-light-switch = { path = "../light-switch" }
 mpt-quick-accent = { path = "../quick-accent", default-features = false }
 mpt-workspaces = { path = "../workspaces", default-features = false }
+mpt-crop-and-lock = { path = "../crop-and-lock", default-features = false }
+mpt-file-locksmith = { path = "../file-locksmith", default-features = false }
+mpt-environment-variables = { path = "../environment-variables", default-features = false }
+mpt-new-plus = { path = "../new-plus", default-features = false }
+mpt-zoom-it = { path = "../zoom-it", default-features = false }
+mpt-power-display = { path = "../power-display", default-features = false }
+mpt-grab-and-move = { path = "../grab-and-move", default-features = false }
+mpt-alt-window-cycle = { path = "../alt-window-cycle", default-features = false }
+mpt-command-not-found = { path = "../command-not-found", default-features = false }
 serde = { workspace = true }
 toml = { workspace = true }
 anyhow = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "mpt-command-not-found"
+description = "Suggest packages that provide a missing shell command"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mpt-common = { path = "../common" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

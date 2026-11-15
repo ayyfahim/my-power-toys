@@ -3470,6 +3470,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpt-alt-window-cycle"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "mpt-always-on-top"
 version = "0.3.30"
 dependencies = [
@@ -3553,6 +3564,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpt-command-not-found"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "mpt-command-palette"
 version = "0.3.30"
 dependencies = [
@@ -3590,32 +3612,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpt-crop-and-lock"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "mpt-daemon"
 version = "0.3.30"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
  "ksni",
+ "mpt-alt-window-cycle",
  "mpt-always-on-top",
  "mpt-app-launcher",
  "mpt-awake",
  "mpt-bulk-rename",
  "mpt-color-picker",
+ "mpt-command-not-found",
  "mpt-command-palette",
  "mpt-common",
+ "mpt-crop-and-lock",
+ "mpt-environment-variables",
  "mpt-fancy-zones",
+ "mpt-file-locksmith",
+ "mpt-grab-and-move",
  "mpt-hosts-editor",
  "mpt-image-resizer",
  "mpt-key-manager",
  "mpt-light-switch",
  "mpt-mouse-utils",
+ "mpt-new-plus",
  "mpt-paste-plain",
  "mpt-peek",
+ "mpt-power-display",
  "mpt-quick-accent",
  "mpt-screen-ruler",
  "mpt-shortcut-guide",
  "mpt-text-extractor",
  "mpt-workspaces",
+ "mpt-zoom-it",
  "serde",
  "tokio",
  "toml",
@@ -3624,6 +3666,17 @@ dependencies = [
  "x11rb",
  "xkeysym",
  "zbus 5.13.2",
+]
+
+[[package]]
+name = "mpt-environment-variables"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3641,6 +3694,28 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "x11rb",
+]
+
+[[package]]
+name = "mpt-file-locksmith"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "mpt-grab-and-move"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3713,6 +3788,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpt-new-plus"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "mpt-paste-plain"
 version = "0.3.30"
 dependencies = [
@@ -3736,6 +3822,17 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "mpt-power-display"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3835,6 +3932,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "x11rb",
+]
+
+[[package]]
+name = "mpt-zoom-it"
+version = "0.3.30"
+dependencies = [
+ "anyhow",
+ "mpt-common",
+ "serde",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

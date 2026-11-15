@@ -25,6 +25,15 @@ members = [
     "crates/light-switch",
     "crates/quick-accent",
     "crates/workspaces",
+    "crates/crop-and-lock",
+    "crates/file-locksmith",
+    "crates/environment-variables",
+    "crates/new-plus",
+    "crates/zoom-it",
+    "crates/power-display",
+    "crates/grab-and-move",
+    "crates/alt-window-cycle",
+    "crates/command-not-found",
 ]
 
 [workspace.package]
