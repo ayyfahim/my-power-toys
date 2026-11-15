@@ -48,8 +48,16 @@ fn main() {
     let config: mpt_shortcut_guide::config::ShortcutGuideConfig =
         mpt_common::config::load_module_config("shortcut-guide").unwrap_or_default();
 
+    let close_on_super_release =
+        std::env::args().any(|a| a == mpt_shortcut_guide::ARG_CLOSE_ON_SUPER_RELEASE);
+
     info!("Shortcut Guide GUI starting");
-    mpt_shortcut_guide::gui::overlay::run_guide(config);
+    mpt_shortcut_guide::gui::overlay::run_guide(
+        config,
+        mpt_shortcut_guide::gui::overlay::GuideOptions {
+            close_on_super_release,
+        },
+    );
 }
 
 fn lock_file_path() -> PathBuf {

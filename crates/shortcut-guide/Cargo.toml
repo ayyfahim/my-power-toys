@@ -25,3 +25,4 @@ toml = { workspace = true }
 egui = { workspace = true, optional = true }
 eframe = { workspace = true, optional = true }
 scopeguard = { version = "1", optional = true }
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
