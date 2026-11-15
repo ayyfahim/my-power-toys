@@ -19,6 +19,10 @@ pub struct Layout {
     #[serde(default = "default_kind")]
     pub kind: TemplateKind,
     pub zones: Vec<Zone>,
+    /// Quick layout switch key (Super+Ctrl+Alt+<key>, 1-9), like upstream's
+    /// per-layout hotkey. When unset, the key maps to the 1-based layout index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_key: Option<u8>,
 }
 
 fn default_kind() -> TemplateKind {
@@ -70,6 +74,18 @@ impl Zone {
         )
     }
 
+    /// Clamp the zone so it lies within the unit square and is at least 1% big.
+    pub fn clamped(&self) -> Self {
+        let x = self.x.clamp(0.0, 0.99);
+        let y = self.y.clamp(0.0, 0.99);
+        Self {
+            x,
+            y,
+            width: self.width.clamp(0.01, 1.0 - x),
+            height: self.height.clamp(0.01, 1.0 - y),
+        }
+    }
+
     /// Check if a point (in percentages) is inside this zone.
     pub fn contains(&self, px: f32, py: f32) -> bool {
         px >= self.x && px <= self.x + self.width && py >= self.y && py <= self.y + self.height
@@ -83,6 +99,7 @@ impl Layout {
             name: "No layout".to_string(),
             kind: TemplateKind::NoLayout,
             zones: vec![],
+            quick_key: None,
         }
     }
 
@@ -92,6 +109,7 @@ impl Layout {
             name: "Focus".to_string(),
             kind: TemplateKind::Focus,
             zones: vec![Zone::new(0.15, 0.1, 0.7, 0.8)],
+            quick_key: None,
         }
     }
 
@@ -105,6 +123,7 @@ impl Layout {
             name: format!("{n} Columns"),
             kind: TemplateKind::Columns,
             zones,
+            quick_key: None,
         }
     }
 
@@ -118,6 +137,7 @@ impl Layout {
             name: format!("{n} Rows"),
             kind: TemplateKind::Rows,
             zones,
+            quick_key: None,
         }
     }
 
@@ -132,6 +152,7 @@ impl Layout {
             name: format!("{cols}x{rows} Grid"),
             kind: TemplateKind::Grid,
             zones,
+            quick_key: None,
         }
     }
 
@@ -146,6 +167,7 @@ impl Layout {
                 Zone::new(0.5, 0.5, 0.25, 0.5),  // Bottom right left
                 Zone::new(0.75, 0.5, 0.25, 0.5), // Bottom right right
             ],
+            quick_key: None,
         }
     }
 
@@ -159,6 +181,7 @@ impl Layout {
                 Zone::new(0.6, 0.0, 0.4, 0.5), // Stack top
                 Zone::new(0.6, 0.5, 0.4, 0.5), // Stack bottom
             ],
+            quick_key: None,
         }
     }
 
@@ -172,6 +195,34 @@ impl Layout {
             Self::grid(3, 2),
             Self::priority_grid(),
         ]
+    }
+
+    /// Build a custom layout of the given kind with `a` x `b` zones
+    /// (`a` = columns for Columns/Grid, rows for Rows; `b` = grid rows).
+    pub fn custom_from_kind(name: &str, kind: TemplateKind, a: usize, b: usize) -> Self {
+        let a = a.clamp(1, 16);
+        let b = b.clamp(1, 16);
+        let mut layout = match kind {
+            TemplateKind::Rows => Self::default_rows(a),
+            TemplateKind::Grid => Self::grid(a, b),
+            TemplateKind::Focus => Self::focus(),
+            TemplateKind::PriorityGrid => Self::priority_grid(),
+            TemplateKind::NoLayout => Self::no_layout(),
+            TemplateKind::Columns | TemplateKind::Custom => Self::default_columns(a),
+        };
+        layout.name = name.to_string();
+        layout.kind = kind;
+        layout
+    }
+
+    /// Custom canvas layout from free-form rectangles (clamped to the screen).
+    pub fn canvas(name: &str, zones: Vec<Zone>) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: TemplateKind::Custom,
+            zones: zones.into_iter().map(|z| z.clamped()).collect(),
+            quick_key: None,
+        }
     }
 
     /// Find which zone a point falls into.
@@ -230,6 +281,27 @@ mod tests {
         assert_eq!(layout.zones.len(), 4);
         assert_eq!(layout.zone_at(0.25, 0.25), Some(0));
         assert_eq!(layout.zone_at(0.75, 0.75), Some(3));
+    }
+
+    #[test]
+    fn custom_layouts_and_clamp() {
+        let l = Layout::custom_from_kind("My grid", TemplateKind::Grid, 2, 3);
+        assert_eq!(l.zones.len(), 6);
+        assert_eq!(l.name, "My grid");
+        let l = Layout::custom_from_kind("R", TemplateKind::Rows, 4, 1);
+        assert_eq!(l.zones.len(), 4);
+        let c = Layout::canvas("C", vec![Zone::new(0.8, -0.2, 0.5, 2.0)]);
+        let z = c.zones[0];
+        assert!((z.y - 0.0).abs() < 1e-6);
+        assert!((z.x + z.width - 1.0).abs() < 1e-6);
+        assert!((z.height - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn layout_without_quick_key_parses() {
+        let json = r#"{"name":"x","kind":"Grid","zones":[]}"#;
+        let parsed: Layout = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.quick_key, None);
     }
 
     #[test]

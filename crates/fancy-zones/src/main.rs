@@ -47,8 +47,7 @@ fn main() {
 fn run_editor_mode() {
     info!("FancyZones editor starting");
 
-    let config: mpt_fancy_zones::config::FancyZonesConfig =
-        mpt_common::config::load_module_config("fancy-zones").unwrap_or_default();
+    let config = mpt_fancy_zones::config::FancyZonesConfig::load();
 
     let monitors = match mpt_common::monitor::detect_monitors() {
         Ok(m) => m,
@@ -79,8 +78,14 @@ fn run_editor_mode() {
 fn run_snap_mode(window_id: u32) {
     info!("FancyZones overlay starting for window {window_id}");
 
-    let config: mpt_fancy_zones::config::FancyZonesConfig =
-        mpt_common::config::load_module_config("fancy-zones").unwrap_or_default();
+    let config = mpt_fancy_zones::config::FancyZonesConfig::load();
+
+    if let Ok(class) = mpt_fancy_zones::x11::get_wm_class(window_id)
+        && config.is_excluded(&class)
+    {
+        info!("Window {window_id} ({class:?}) is excluded from FancyZones");
+        return;
+    }
 
     // Detect which monitor the window is on
     let monitor = match mpt_fancy_zones::x11::find_monitor_for_window(window_id) {
@@ -123,26 +128,37 @@ fn run_snap_mode(window_id: u32) {
         return;
     }
 
-    let zone_gap = config.zone_gap;
+    let style = mpt_fancy_zones::zone_window::ZoneStyle::from_config(&config);
 
     // Show overlay on the target monitor
-    let selected = mpt_fancy_zones::overlay::run_overlay(layout.clone(), zone_gap, &monitor);
+    let selected = mpt_fancy_zones::overlay::run_overlay_styled(layout.clone(), style, &monitor);
 
     match selected {
         Some(zone_idx) => {
             info!("Zone {zone_idx} selected, snapping window {window_id}");
 
-            if let Some(zone) = layout.zones.get(zone_idx) {
-                // Snap coordinates are relative to the monitor
-                let (zx, zy, zw, zh) =
-                    zone.to_pixels_with_gap(monitor.width, monitor.height, zone_gap);
-                // Convert to absolute screen coordinates
-                let abs_x = monitor.x + zx;
-                let abs_y = monitor.y + zy;
-
-                if let Err(e) =
-                    mpt_fancy_zones::x11::move_resize_window(window_id, abs_x, abs_y, zw, zh)
-                {
+            if zone_idx < layout.zones.len() {
+                let target = mpt_fancy_zones::snap::Target {
+                    name: monitor.name.clone(),
+                    area: mpt_fancy_zones::geometry::Rect::from_monitor(&monitor),
+                    zones: mpt_fancy_zones::geometry::zone_rects(
+                        &layout,
+                        mpt_fancy_zones::geometry::Rect::from_monitor(&monitor),
+                    ),
+                    layout: layout.clone(),
+                };
+                let result = mpt_fancy_zones::x11::Wm::connect().and_then(|wm| {
+                    let size_before = wm.geometry(window_id).map(|g| (g.w as u32, g.h as u32));
+                    mpt_fancy_zones::snap::snap_window(
+                        &wm,
+                        &config,
+                        window_id,
+                        &target,
+                        &[zone_idx],
+                        size_before,
+                    )
+                });
+                if let Err(e) = result {
                     error!("Failed to snap window: {e}");
                 }
             }

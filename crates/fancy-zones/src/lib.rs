@@ -1,27 +1,42 @@
 pub mod config;
+pub mod drag;
 #[cfg(feature = "gui")]
 pub mod editor;
+pub mod geometry;
 pub mod layout;
 #[cfg(feature = "gui")]
 pub mod overlay;
+pub mod snap;
+pub mod state;
 pub mod x11;
+pub mod zone_window;
+
+pub use config::FancyZonesConfig;
 
 use anyhow::Result;
 use mpt_common::hotkey::{Hotkey, Modifier};
 use mpt_common::module::PowerModule;
 use tracing::{info, warn};
 
+/// Quick layout switch actions, Super+Ctrl+Alt+<1..9>.
+const LAYOUT_ACTIONS: [&str; 9] = [
+    "layout-1", "layout-2", "layout-3", "layout-4", "layout-5", "layout-6", "layout-7", "layout-8",
+    "layout-9",
+];
+
 pub struct FancyZones {
     running: bool,
     config: config::FancyZonesConfig,
+    drag_thread: Option<drag::DragThread>,
 }
 
 impl FancyZones {
     pub fn new() -> Self {
-        let config = mpt_common::config::load_module_config("fancy-zones").unwrap_or_default();
+        let config = config::FancyZonesConfig::load();
         Self {
             running: false,
             config,
+            drag_thread: None,
         }
     }
 
@@ -59,13 +74,47 @@ impl PowerModule for FancyZones {
         Some(Hotkey::new(vec![Modifier::Super, Modifier::Shift], "Z"))
     }
 
-    /// Additional hotkey: Super+Z opens the snap overlay.
+    /// Additional hotkeys: Super+Z opens the snap overlay; optionally Super+Arrow
+    /// (`override_snap_hotkeys`) and Super+Ctrl+Alt+<1..9> (`quick_layout_switch`).
+    /// These are read when the daemon registers hotkeys, so changing the two
+    /// flags needs a daemon restart.
     fn additional_hotkeys(&self) -> Vec<(Hotkey, &'static str)> {
-        vec![(Hotkey::new(vec![Modifier::Super], "Z"), "snap")]
+        let mut keys = vec![(Hotkey::new(vec![Modifier::Super], "Z"), "snap")];
+        if self.config.override_snap_hotkeys {
+            keys.push((Hotkey::new(vec![Modifier::Super], "Left"), "move-left"));
+            keys.push((Hotkey::new(vec![Modifier::Super], "Right"), "move-right"));
+            // Upstream only overrides Win+Up/Down in position-based mode.
+            if self.config.move_windows_based_on_position {
+                keys.push((Hotkey::new(vec![Modifier::Super], "Up"), "move-up"));
+                keys.push((Hotkey::new(vec![Modifier::Super], "Down"), "move-down"));
+            }
+        }
+        if self.config.quick_layout_switch {
+            for (i, action) in LAYOUT_ACTIONS.iter().enumerate() {
+                keys.push((
+                    Hotkey::new(
+                        vec![Modifier::Super, Modifier::Ctrl, Modifier::Alt],
+                        (i + 1).to_string(),
+                    ),
+                    action,
+                ));
+            }
+        }
+        keys
     }
 
     fn start(&mut self) -> Result<()> {
+        self.config = config::FancyZonesConfig::load();
         self.running = true;
+        let on_x11 = std::env::var_os("DISPLAY").is_some();
+        if self.config.drag_snap_enabled && on_x11 && self.drag_thread.is_none() {
+            match drag::DragThread::spawn() {
+                Ok(t) => self.drag_thread = Some(t),
+                Err(e) => warn!("FancyZones: drag-to-snap unavailable: {e}"),
+            }
+        } else if !on_x11 {
+            warn!("FancyZones: no X11 display, drag-to-snap disabled");
+        }
         info!(
             "FancyZones started with {} layout(s)",
             self.config.layouts.len()
@@ -75,6 +124,9 @@ impl PowerModule for FancyZones {
 
     fn stop(&mut self) -> Result<()> {
         self.running = false;
+        if let Some(mut t) = self.drag_thread.take() {
+            t.shutdown();
+        }
         info!("FancyZones stopped");
         Ok(())
     }
@@ -123,6 +175,15 @@ impl PowerModule for FancyZones {
                 Ok(child) => info!("FancyZones overlay spawned (pid={})", child.id()),
                 Err(e) => warn!("Failed to spawn FancyZones overlay ({bin:?}): {e}"),
             }
+        } else if let Some(dir) = geometry::Direction::from_action(action) {
+            self.config = config::FancyZonesConfig::load();
+            snap::move_active_window(&self.config, dir)?;
+        } else if let Some(key) = action
+            .strip_prefix("layout-")
+            .and_then(|k| k.parse::<u8>().ok())
+        {
+            snap::quick_switch(key)?;
+            self.config = config::FancyZonesConfig::load();
         } else {
             warn!("FancyZones: unknown action '{action}'");
         }
