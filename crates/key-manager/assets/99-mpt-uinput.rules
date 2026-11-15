@@ -1,0 +1,13 @@
+# MyPowerToys Key Manager: allow members of the `input` group to create
+# virtual keyboards (uinput). Reading /dev/input/event* is already granted to
+# the `input` group by systemd's default rules.
+#
+# Install:
+#   sudo cp 99-mpt-uinput.rules /etc/udev/rules.d/
+#   sudo usermod -aG input "$USER"
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   (log out and back in so the new group membership applies)
+# If /dev/uinput does not exist: sudo modprobe uinput
+#   (persist with: echo uinput | sudo tee /etc/modules-load.d/uinput.conf)
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0660"
