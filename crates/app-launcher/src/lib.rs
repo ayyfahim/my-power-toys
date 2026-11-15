@@ -1,39 +1,22 @@
+pub mod actions;
 pub mod calculator;
+pub mod config;
 pub mod desktop;
 pub mod frecency;
+#[cfg(feature = "gui")]
+pub mod gui;
+pub mod placement;
+pub mod plugins;
 pub mod search;
+pub mod x11;
 
 use anyhow::Result;
 use mpt_common::hotkey::Hotkey;
 use mpt_common::module::PowerModule;
-use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppLauncherConfig {
-    #[serde(default = "default_max_results")]
-    pub max_results: usize,
-
-    #[serde(default = "default_true")]
-    pub show_calculator: bool,
-}
-
-fn default_max_results() -> usize {
-    8
-}
-
-fn default_true() -> bool {
-    true
-}
-
-impl Default for AppLauncherConfig {
-    fn default() -> Self {
-        Self {
-            max_results: default_max_results(),
-            show_calculator: default_true(),
-        }
-    }
-}
+pub use config::{AppLauncherConfig, LauncherPosition, PluginId, PluginSettings, ResolvedPlugin};
+pub use plugins::{Engine, LauncherResult};
 
 pub struct AppLauncher {
     running: bool,
@@ -54,6 +37,12 @@ impl AppLauncher {
     pub fn config(&self) -> &AppLauncherConfig {
         &self.config
     }
+
+    /// Headless search over the indexed applications (legacy API).
+    pub fn search(&self, query: &str) -> Vec<search::SearchResult> {
+        self.index
+            .search(query, self.config.max_results, self.config.show_calculator)
+    }
 }
 
 impl Default for AppLauncher {
@@ -72,15 +61,17 @@ impl PowerModule for AppLauncher {
     }
 
     fn description(&self) -> &'static str {
-        "Quick application launcher with search, frecency ranking and inline calculator"
+        "PowerToys Run style launcher: apps, calculator, shell, files, windows, web search and more"
     }
 
     fn default_hotkey(&self) -> Option<Hotkey> {
-        // Superseded by Command Palette (Alt+Space)
+        // Alt+Space (the upstream PowerToys Run default) belongs to Command
+        // Palette; users can bind App Launcher to any hotkey in settings.
         None
     }
 
     fn start(&mut self) -> Result<()> {
+        self.config = mpt_common::config::load_module_config("app-launcher").unwrap_or_default();
         info!("App Launcher: indexing .desktop files...");
         self.index.refresh()?;
         info!(
@@ -102,9 +93,33 @@ impl PowerModule for AppLauncher {
     }
 
     fn on_hotkey(&mut self) -> Result<()> {
-        info!("App Launcher: would open launcher overlay");
+        self.config = mpt_common::config::load_module_config("app-launcher").unwrap_or_default();
+        let bin = find_gui_binary();
+        let result = std::process::Command::new(&bin)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match result {
+            Ok(child) => info!("App Launcher GUI spawned (pid={})", child.id()),
+            Err(e) => warn!("Failed to spawn App Launcher GUI ({bin:?}): {e}"),
+        }
         Ok(())
     }
+}
+
+/// Find the mpt-app-launcher binary, looking next to the current executable first.
+fn find_gui_binary() -> std::path::PathBuf {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join("mpt-app-launcher");
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    // Fallback: rely on PATH
+    "mpt-app-launcher".into()
 }
 
 #[cfg(test)]
@@ -125,5 +140,15 @@ mod tests {
         let parsed: AppLauncherConfig = toml::from_str("").unwrap();
         assert_eq!(parsed.max_results, 8);
         assert!(parsed.show_calculator);
+    }
+
+    #[test]
+    fn no_default_hotkey_to_avoid_command_palette_clash() {
+        let l = AppLauncher {
+            running: false,
+            index: search::SearchIndex::new(),
+            config: AppLauncherConfig::default(),
+        };
+        assert_eq!(l.default_hotkey(), None);
     }
 }

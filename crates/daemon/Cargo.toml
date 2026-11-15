@@ -23,7 +23,7 @@ mpt-mouse-utils = { path = "../mouse-utils" }
 mpt-screen-ruler = { path = "../screen-ruler" }
 mpt-text-extractor = { path = "../text-extractor" }
 mpt-shortcut-guide = { path = "../shortcut-guide" }
-mpt-app-launcher = { path = "../app-launcher" }
+mpt-app-launcher = { path = "../app-launcher", default-features = false }
 mpt-fancy-zones = { path = "../fancy-zones" }
 mpt-peek = { path = "../peek" }
 mpt-command-palette = { path = "../command-palette", default-features = false }

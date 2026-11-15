@@ -16,7 +16,7 @@ gui = ["dep:egui", "dep:eframe", "dep:scopeguard", "dep:image", "dep:resvg", "mp
 
 [dependencies]
 mpt-common = { path = "../common" }
-mpt-app-launcher = { path = "../app-launcher" }
+mpt-app-launcher = { path = "../app-launcher", default-features = false }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

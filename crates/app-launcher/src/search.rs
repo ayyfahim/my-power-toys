@@ -92,7 +92,7 @@ impl Default for SearchIndex {
 }
 
 /// Score how well an app matches a query. Returns None if no match.
-fn match_score(app: &DesktopEntry, query: &str) -> Option<f64> {
+pub(crate) fn match_score(app: &DesktopEntry, query: &str) -> Option<f64> {
     let name_lower = app.name.to_lowercase();
 
     // Exact match
