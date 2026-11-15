@@ -1,0 +1,9 @@
+post_install() {
+    echo "Key Manager: add yourself to the input group: sudo usermod -aG input \$USER"
+    echo "Power Display: add yourself to the i2c group for ddcutil: sudo usermod -aG i2c \$USER"
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+}
+
+post_upgrade() {
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+}

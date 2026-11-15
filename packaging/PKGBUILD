@@ -16,21 +16,43 @@ optdepends=(
     'imagemagick: image dimension detection'
     'ffmpeg: media file preview'
     'poppler: PDF preview'
+    'ddcutil: Power Display control of external monitors (DDC/CI)'
+    'brightnessctl: Power Display laptop backlight control'
+    'xorg-xrandr: Power Display software brightness on X11'
+    'polkit: File Locksmith and Environment Variables admin actions (pkexec)'
+    'wf-recorder: ZoomIt recording on Wayland'
+    'grim: screen capture on Wayland'
 )
+install=my-power-toys.install
 source=("${pkgname}-${pkgver}.tar.gz")
+_binaries=(
+    mpt-daemon mpt-ctl mpt-settings
+    mpt-app-launcher mpt-bulk-rename mpt-color-picker mpt-command-not-found
+    mpt-command-palette mpt-crop-and-lock mpt-environment-variables
+    mpt-fancy-zones mpt-file-locksmith mpt-hosts-editor mpt-image-resizer
+    mpt-new-plus mpt-paste-plain mpt-peek mpt-power-display mpt-quick-accent
+    mpt-screen-ruler mpt-shortcut-guide mpt-text-extractor mpt-workspaces
+    mpt-zoom-it
+)
 sha256sums=('SKIP')
 
 build() {
     cd "${srcdir}/${pkgname}-${pkgver}"
-    cargo build --release --locked
+    # Whole workspace with default features, so every module's GUI binary is built.
+    cargo build --release --locked --workspace
 }
 
 package() {
     cd "${srcdir}/${pkgname}-${pkgver}"
 
-    install -Dm755 "target/release/mpt-daemon" "${pkgdir}/usr/bin/mpt-daemon"
-    install -Dm755 "target/release/mpt-settings" "${pkgdir}/usr/bin/mpt-settings"
-    install -Dm755 "target/release/mpt-ctl" "${pkgdir}/usr/bin/mpt-ctl"
+    local bin
+    for bin in "${_binaries[@]}"; do
+        install -Dm755 "target/release/${bin}" "${pkgdir}/usr/bin/${bin}"
+    done
+
+    # Key Manager: input group access to /dev/uinput
+    install -Dm644 "crates/key-manager/assets/99-mpt-uinput.rules" \
+        "${pkgdir}/usr/lib/udev/rules.d/99-mpt-uinput.rules"
 
     install -Dm644 "assets/my-power-toys.desktop" "${pkgdir}/usr/share/applications/my-power-toys.desktop"
     install -Dm644 "assets/my-power-toys-daemon.desktop" "${pkgdir}/usr/share/applications/my-power-toys-daemon.desktop"
