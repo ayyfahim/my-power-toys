@@ -335,6 +335,133 @@ pub struct Tr {
     pub ms_br_fmt_capitalize: &'static str,
     pub ms_br_enumerate: &'static str,
     pub ms_br_enumerate_desc: &'static str,
+
+    // General (new modules)
+    pub ms_general: &'static str,
+    pub ms_shortcuts: &'static str,
+    pub ms_shortcut_hint: &'static str,
+    pub ms_excluded_apps_list: &'static str,
+
+    // Advanced Paste
+    pub ms_pp_ui_shortcut: &'static str,
+    pub ms_pp_markdown_shortcut: &'static str,
+    pub ms_pp_json_shortcut: &'static str,
+    pub ms_pp_preview: &'static str,
+    pub ms_pp_preview_desc: &'static str,
+    pub ms_pp_close_focus: &'static str,
+    pub ms_pp_close_focus_desc: &'static str,
+    pub ms_pp_as_file: &'static str,
+    pub ms_pp_as_file_desc: &'static str,
+    pub ms_pp_ai: &'static str,
+    pub ms_pp_ai_desc: &'static str,
+    pub ms_pp_ai_endpoint: &'static str,
+    pub ms_pp_ai_model: &'static str,
+    pub ms_pp_ai_key_env: &'static str,
+
+    // Screen Ruler
+    pub ms_sr_shortcut: &'static str,
+    pub ms_sr_feet: &'static str,
+    pub ms_sr_feet_desc: &'static str,
+    pub ms_sr_per_channel: &'static str,
+    pub ms_sr_per_channel_desc: &'static str,
+    pub ms_sr_tolerance: &'static str,
+    pub ms_sr_color: &'static str,
+    pub ms_sr_units: &'static str,
+
+    // Crop and Lock
+    pub ms_cal_thumbnail: &'static str,
+    pub ms_cal_reparent: &'static str,
+    pub ms_cal_screenshot: &'static str,
+
+    // File Locksmith
+    pub ms_fl_context_menu: &'static str,
+    pub ms_fl_context_menu_desc: &'static str,
+    pub ms_fl_kill_timeout: &'static str,
+    pub ms_fl_refresh: &'static str,
+
+    // Environment Variables
+    pub ms_ev_admin: &'static str,
+    pub ms_ev_admin_desc: &'static str,
+    pub ms_ev_update_session: &'static str,
+    pub ms_ev_update_session_desc: &'static str,
+
+    // New+
+    pub ms_np_location: &'static str,
+    pub ms_np_hide_ext: &'static str,
+    pub ms_np_hide_ext_desc: &'static str,
+    pub ms_np_hide_digits: &'static str,
+    pub ms_np_hide_digits_desc: &'static str,
+    pub ms_np_replace_vars: &'static str,
+    pub ms_np_replace_vars_desc: &'static str,
+    pub ms_np_context_menu: &'static str,
+    pub ms_np_context_menu_desc: &'static str,
+    pub ms_np_sync_xdg: &'static str,
+    pub ms_np_sync_xdg_desc: &'static str,
+
+    // ZoomIt
+    pub ms_zi_zoom: &'static str,
+    pub ms_zi_draw: &'static str,
+    pub ms_zi_break: &'static str,
+    pub ms_zi_live_zoom: &'static str,
+    pub ms_zi_record: &'static str,
+    pub ms_zi_snip: &'static str,
+    pub ms_zi_snip_save: &'static str,
+    pub ms_zi_animate: &'static str,
+    pub ms_zi_animate_desc: &'static str,
+    pub ms_zi_smooth: &'static str,
+    pub ms_zi_smooth_desc: &'static str,
+    pub ms_zi_pen_color: &'static str,
+    pub ms_zi_break_timeout: &'static str,
+    pub ms_zi_frame_rate: &'static str,
+    pub ms_zi_audio: &'static str,
+    pub ms_zi_audio_desc: &'static str,
+    pub ms_zi_snip_copy: &'static str,
+    pub ms_zi_snip_copy_desc: &'static str,
+    pub ms_zi_screenshot_dir: &'static str,
+    pub ms_zi_recording_dir: &'static str,
+
+    // Power Display
+    pub ms_pd_brightness_up: &'static str,
+    pub ms_pd_brightness_down: &'static str,
+    pub ms_pd_step: &'static str,
+    pub ms_pd_osd: &'static str,
+    pub ms_pd_osd_desc: &'static str,
+    pub ms_pd_restore: &'static str,
+    pub ms_pd_restore_desc: &'static str,
+    pub ms_pd_linked: &'static str,
+    pub ms_pd_linked_desc: &'static str,
+    pub ms_pd_backends: &'static str,
+    pub ms_pd_ddc: &'static str,
+    pub ms_pd_ddc_desc: &'static str,
+    pub ms_pd_backlight: &'static str,
+    pub ms_pd_backlight_desc: &'static str,
+    pub ms_pd_software: &'static str,
+    pub ms_pd_software_desc: &'static str,
+
+    // Grab and Move
+    pub ms_gm_modifier: &'static str,
+    pub ms_gm_modifier_desc: &'static str,
+    pub ms_gm_resize: &'static str,
+    pub ms_gm_resize_desc: &'static str,
+    pub ms_gm_game_mode: &'static str,
+    pub ms_gm_game_mode_desc: &'static str,
+
+    // Alt Window Cycle
+    pub ms_awc_next: &'static str,
+    pub ms_awc_prev: &'static str,
+    pub ms_awc_minimized: &'static str,
+    pub ms_awc_minimized_desc: &'static str,
+    pub ms_awc_all_desktops: &'static str,
+    pub ms_awc_all_desktops_desc: &'static str,
+    pub ms_awc_timeout: &'static str,
+
+    // Command Not Found
+    pub ms_cnf_install: &'static str,
+    pub ms_cnf_install_desc: &'static str,
+    pub ms_cnf_shells: &'static str,
+    pub ms_cnf_fuzzy: &'static str,
+    pub ms_cnf_fuzzy_desc: &'static str,
+    pub ms_cnf_timeout: &'static str,
 }
 
 pub fn get(lang: Language) -> &'static Tr {

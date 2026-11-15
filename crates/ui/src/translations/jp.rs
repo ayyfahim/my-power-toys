@@ -310,4 +310,131 @@ pub(super) static JP: Tr = Tr {
     ms_br_fmt_capitalize: "Aa Aa",
     ms_br_enumerate: "アイテムを列挙",
     ms_br_enumerate_desc: "置換で${}、${start=1;padding=3}などのカウンターパターンを有効にする",
+
+    // General (new modules)
+    ms_general: "一般",
+    ms_shortcuts: "ショートカット",
+    ms_shortcut_hint: "形式: Super+Shift+X。空欄で無効になります。変更はデーモンの再起動後に反映されます。",
+    ms_excluded_apps_list: "除外するアプリ (カンマ区切り)",
+
+    // Advanced Paste
+    ms_pp_ui_shortcut: "高度な貼り付けを開く",
+    ms_pp_markdown_shortcut: "Markdown として貼り付け",
+    ms_pp_json_shortcut: "JSON として貼り付け",
+    ms_pp_preview: "クリップボードのプレビュー",
+    ms_pp_preview_desc: "ピッカーにクリップボードの内容を表示",
+    ms_pp_close_focus: "フォーカスを失ったら閉じる",
+    ms_pp_close_focus_desc: "別のウィンドウがアクティブになったらピッカーを隠す",
+    ms_pp_as_file: "ファイルとして貼り付け",
+    ms_pp_as_file_desc: "ピッカーに .txt / .png / .html 形式を表示",
+    ms_pp_ai: "AI アクション",
+    ms_pp_ai_desc: "AI 変換に OpenAI 互換のエンドポイントを使用します。API キーは環境変数から読み込まれます。",
+    ms_pp_ai_endpoint: "エンドポイント URL",
+    ms_pp_ai_model: "モデル",
+    ms_pp_ai_key_env: "API キーの環境変数",
+
+    // Screen Ruler
+    ms_sr_shortcut: "起動ショートカット",
+    ms_sr_feet: "十字線の端に目印を描く",
+    ms_sr_feet_desc: "測定線の端に短い垂直線を追加",
+    ms_sr_per_channel: "色チャンネルごとのエッジ検出",
+    ms_sr_per_channel_desc: "合計の差ではなく各チャンネルを許容値と比較",
+    ms_sr_tolerance: "ピクセル許容値 (0-255)",
+    ms_sr_color: "線の色",
+    ms_sr_units: "測定単位",
+
+    // Crop and Lock
+    ms_cal_thumbnail: "サムネイル",
+    ms_cal_reparent: "再親子付け",
+    ms_cal_screenshot: "スクリーンショット",
+
+    // File Locksmith
+    ms_fl_context_menu: "ファイルマネージャーのメニュー項目",
+    ms_fl_context_menu_desc: "Nautilus・Dolphin・Thunar に「File Locksmith でロック解除」を追加",
+    ms_fl_kill_timeout: "強制終了までの待機時間 (ms)",
+    ms_fl_refresh: "更新間隔 (ms、0 = 無効)",
+
+    // Environment Variables
+    ms_ev_admin: "システム変数を編集",
+    ms_ev_admin_desc: "/etc/environment.d の編集を許可 (pkexec でパスワードを要求)",
+    ms_ev_update_session: "実行中のセッションを更新",
+    ms_ev_update_session_desc: "ログアウトせずに、新しく起動するアプリに変更を反映",
+
+    // New+
+    ms_np_location: "テンプレートフォルダー",
+    ms_np_hide_ext: "拡張子を隠す",
+    ms_np_hide_ext_desc: "メニューでテンプレート名を拡張子なしで表示",
+    ms_np_hide_digits: "先頭の数字を隠す",
+    ms_np_hide_digits_desc: "名前から「01. 」のような並び順の接頭辞を除去",
+    ms_np_replace_vars: "変数を置換",
+    ms_np_replace_vars_desc: "作成する名前の $YYYY、%USERNAME%、$PARENT_FOLDER_NAME… を展開",
+    ms_np_context_menu: "ファイルマネージャーのメニュー",
+    ms_np_context_menu_desc: "Nautilus スクリプトと Dolphin サービスメニューを生成",
+    ms_np_sync_xdg: "XDG テンプレートと同期",
+    ms_np_sync_xdg_desc: "テンプレートを XDG テンプレートフォルダーにリンク",
+
+    // ZoomIt
+    ms_zi_zoom: "ズーム",
+    ms_zi_draw: "描画",
+    ms_zi_break: "休憩タイマー",
+    ms_zi_live_zoom: "ライブズーム",
+    ms_zi_record: "録画",
+    ms_zi_snip: "クリップボードへ切り取り",
+    ms_zi_snip_save: "ファイルへ切り取り",
+    ms_zi_animate: "ズームをアニメーション",
+    ms_zi_animate_desc: "ズームイン・アウトを滑らかにアニメーション",
+    ms_zi_smooth: "画像を滑らかにする",
+    ms_zi_smooth_desc: "拡大画像をピクセルのまま表示せずにフィルター処理",
+    ms_zi_pen_color: "ペンの色",
+    ms_zi_break_timeout: "休憩時間 (分)",
+    ms_zi_frame_rate: "録画のフレームレート",
+    ms_zi_audio: "音声を録音",
+    ms_zi_audio_desc: "録画中にマイクの音声を取り込む",
+    ms_zi_snip_copy: "保存した切り取りもコピー",
+    ms_zi_snip_copy_desc: "切り取りを保存するときにクリップボードにもコピー",
+    ms_zi_screenshot_dir: "スクリーンショットの保存先 (空 = ~/Pictures)",
+    ms_zi_recording_dir: "録画の保存先 (空 = ~/Videos)",
+
+    // Power Display
+    ms_pd_brightness_up: "明るさを上げる",
+    ms_pd_brightness_down: "明るさを下げる",
+    ms_pd_step: "明るさの変化量 (%)",
+    ms_pd_osd: "通知を表示",
+    ms_pd_osd_desc: "ショートカット使用後に新しい明るさを表示",
+    ms_pd_restore: "起動時に復元",
+    ms_pd_restore_desc: "モジュール開始時に前回の値を再適用",
+    ms_pd_linked: "モニターのレベルを連動",
+    ms_pd_linked_desc: "明るさの変更をすべてのモニターに適用",
+    ms_pd_backends: "制御方法",
+    ms_pd_ddc: "DDC/CI",
+    ms_pd_ddc_desc: "ddcutil による外部モニター (i2c グループが必要)",
+    ms_pd_backlight: "バックライト",
+    ms_pd_backlight_desc: "/sys/class/backlight によるノート PC の画面",
+    ms_pd_software: "ソフトウェア明るさ",
+    ms_pd_software_desc: "ハードウェア制御のない X11 出力に xrandr を使用",
+
+    // Grab and Move
+    ms_gm_modifier: "修飾キー",
+    ms_gm_modifier_desc: "このキーを押しながら左ボタンでドラッグするとウィンドウを移動",
+    ms_gm_resize: "右ボタンでサイズ変更",
+    ms_gm_resize_desc: "修飾キー + 右ドラッグでウィンドウのサイズを変更",
+    ms_gm_game_mode: "全画面では無効",
+    ms_gm_game_mode_desc: "アクティブウィンドウが全画面のときは何もしない",
+
+    // Alt Window Cycle
+    ms_awc_next: "次のウィンドウ",
+    ms_awc_prev: "前のウィンドウ",
+    ms_awc_minimized: "最小化したウィンドウを含める",
+    ms_awc_minimized_desc: "最小化したウィンドウも復元して切り替える",
+    ms_awc_all_desktops: "すべての仮想デスクトップ",
+    ms_awc_all_desktops_desc: "他の仮想デスクトップのウィンドウも含める",
+    ms_awc_timeout: "連続切り替えの猶予 (ms)",
+
+    // Command Not Found
+    ms_cnf_install: "シェルフックをインストール",
+    ms_cnf_install_desc: "モジュール開始時に、選択したシェルへ command-not-found ハンドラーを追加",
+    ms_cnf_shells: "シェル",
+    ms_cnf_fuzzy: "似たコマンドを提案",
+    ms_cnf_fuzzy_desc: "名前が似ているインストール済みコマンドを表示",
+    ms_cnf_timeout: "検索タイムアウト (ms)",
 };

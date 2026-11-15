@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::module_settings::{BoolField, TextField};
 use crate::translations::Language;
 use crate::types::{FontSize, Page, ThemeMode, ToastKind, VisualTheme};
 
@@ -47,13 +48,13 @@ pub enum Message {
     StartDaemon,
     StartDaemonResult(Result<(), String>),
     // Module settings
-    SetColorPickerFormat(String),
-    SetColorPickerBehavior(String),
+    SetColorPickerFormat(mpt_color_picker::ColorFormat),
+    SetColorPickerBehavior(mpt_color_picker::ActivationBehavior),
     ToggleColorPickerShowName(bool),
     ToggleColorFormat(String, bool),
     SetTextExtractorLang(String),
-    SetImageResizerPreset(String),
-    SetImageResizerFormat(String),
+    SetImageResizerPreset(mpt_image_resizer::ResizePreset),
+    SetImageResizerFormat(mpt_image_resizer::OutputFormat),
     SetImageResizerQuality(u8),
     // Mouse Utilities — Find My Mouse
     ToggleMouseFindMyMouse(bool),
@@ -145,6 +146,13 @@ pub enum Message {
     ToggleBulkRenameIncludeSubfolders(bool),
     SetBulkRenameTextFormatting(String),
     ToggleBulkRenameEnumerate(bool),
+    // Simple fields of the newer modules (see module_settings::{BoolField, TextField})
+    SetCfgBool(BoolField, bool),
+    SetCfgText(TextField, String),
+    // Screen Ruler
+    SetScreenRulerUnits(mpt_screen_ruler::UnitsOfMeasure),
+    // Grab and Move
+    SetGrabModifier(mpt_grab_and_move::GrabModifier),
     DemoToast(ToastKind),
     OpenDemoDialog,
     CloseDemoDialog,

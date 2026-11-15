@@ -310,4 +310,131 @@ pub(super) static CN: Tr = Tr {
     ms_br_fmt_capitalize: "Aa Aa",
     ms_br_enumerate: "枚举项目",
     ms_br_enumerate_desc: "在替换中启用计数器模式，如${}、${start=1;padding=3}",
+
+    // General (new modules)
+    ms_general: "常规",
+    ms_shortcuts: "快捷键",
+    ms_shortcut_hint: "格式：Super+Shift+X。留空则禁用。更改将在重启守护进程后生效。",
+    ms_excluded_apps_list: "排除的应用（逗号分隔）",
+
+    // Advanced Paste
+    ms_pp_ui_shortcut: "打开高级粘贴",
+    ms_pp_markdown_shortcut: "粘贴为 Markdown",
+    ms_pp_json_shortcut: "粘贴为 JSON",
+    ms_pp_preview: "剪贴板预览",
+    ms_pp_preview_desc: "在选择器中显示剪贴板内容",
+    ms_pp_close_focus: "失去焦点时关闭",
+    ms_pp_close_focus_desc: "激活其他窗口时隐藏选择器",
+    ms_pp_as_file: "粘贴为文件",
+    ms_pp_as_file_desc: "在选择器中列出 .txt、.png 和 .html 格式",
+    ms_pp_ai: "AI 操作",
+    ms_pp_ai_desc: "使用兼容 OpenAI 的端点进行 AI 转换。API 密钥从环境变量读取。",
+    ms_pp_ai_endpoint: "端点 URL",
+    ms_pp_ai_model: "模型",
+    ms_pp_ai_key_env: "API 密钥环境变量",
+
+    // Screen Ruler
+    ms_sr_shortcut: "激活快捷键",
+    ms_sr_feet: "在十字线末端绘制端标",
+    ms_sr_feet_desc: "在测量线两端添加短垂直线",
+    ms_sr_per_channel: "按颜色通道检测边缘",
+    ms_sr_per_channel_desc: "将每个通道与容差比较，而不是比较总差值",
+    ms_sr_tolerance: "像素容差 (0-255)",
+    ms_sr_color: "线条颜色",
+    ms_sr_units: "测量单位",
+
+    // Crop and Lock
+    ms_cal_thumbnail: "缩略图",
+    ms_cal_reparent: "重新挂载",
+    ms_cal_screenshot: "截图",
+
+    // File Locksmith
+    ms_fl_context_menu: "文件管理器菜单项",
+    ms_fl_context_menu_desc: "在 Nautilus、Dolphin 和 Thunar 中添加“使用 File Locksmith 解锁”",
+    ms_fl_kill_timeout: "强制结束前的等待时间 (毫秒)",
+    ms_fl_refresh: "刷新间隔 (毫秒，0 = 关闭)",
+
+    // Environment Variables
+    ms_ev_admin: "编辑系统变量",
+    ms_ev_admin_desc: "允许编辑 /etc/environment.d（通过 pkexec 请求密码）",
+    ms_ev_update_session: "更新当前会话",
+    ms_ev_update_session_desc: "无需注销即可将更改应用到新启动的应用",
+
+    // New+
+    ms_np_location: "模板文件夹",
+    ms_np_hide_ext: "隐藏文件扩展名",
+    ms_np_hide_ext_desc: "菜单中显示不带扩展名的模板名称",
+    ms_np_hide_digits: "隐藏开头数字",
+    ms_np_hide_digits_desc: "从名称中去掉“01. ”之类的排序前缀",
+    ms_np_replace_vars: "替换变量",
+    ms_np_replace_vars_desc: "在创建的名称中解析 $YYYY、%USERNAME%、$PARENT_FOLDER_NAME…",
+    ms_np_context_menu: "文件管理器菜单",
+    ms_np_context_menu_desc: "生成 Nautilus 脚本和 Dolphin 服务菜单",
+    ms_np_sync_xdg: "与 XDG 模板同步",
+    ms_np_sync_xdg_desc: "将模板链接到 XDG 模板文件夹",
+
+    // ZoomIt
+    ms_zi_zoom: "缩放",
+    ms_zi_draw: "绘图",
+    ms_zi_break: "休息计时器",
+    ms_zi_live_zoom: "实时缩放",
+    ms_zi_record: "录制",
+    ms_zi_snip: "截取到剪贴板",
+    ms_zi_snip_save: "截取到文件",
+    ms_zi_animate: "缩放动画",
+    ms_zi_animate_desc: "平滑地放大和缩小",
+    ms_zi_smooth: "平滑图像",
+    ms_zi_smooth_desc: "对放大图像进行过滤，而不是显示原始像素",
+    ms_zi_pen_color: "画笔颜色",
+    ms_zi_break_timeout: "休息时长 (分钟)",
+    ms_zi_frame_rate: "录制帧率",
+    ms_zi_audio: "录制音频",
+    ms_zi_audio_desc: "录制时捕获麦克风音频",
+    ms_zi_snip_copy: "复制已保存的截图",
+    ms_zi_snip_copy_desc: "保存截图时同时复制到剪贴板",
+    ms_zi_screenshot_dir: "截图文件夹（留空 = ~/Pictures）",
+    ms_zi_recording_dir: "录制文件夹（留空 = ~/Videos）",
+
+    // Power Display
+    ms_pd_brightness_up: "提高亮度",
+    ms_pd_brightness_down: "降低亮度",
+    ms_pd_step: "亮度步长 (%)",
+    ms_pd_osd: "显示通知",
+    ms_pd_osd_desc: "使用快捷键后显示新的亮度",
+    ms_pd_restore: "启动时恢复",
+    ms_pd_restore_desc: "模块启动时重新应用上次的值",
+    ms_pd_linked: "联动显示器亮度",
+    ms_pd_linked_desc: "亮度更改应用于所有显示器",
+    ms_pd_backends: "控制方式",
+    ms_pd_ddc: "DDC/CI",
+    ms_pd_ddc_desc: "通过 ddcutil 控制外接显示器（需要 i2c 组）",
+    ms_pd_backlight: "背光",
+    ms_pd_backlight_desc: "通过 /sys/class/backlight 控制笔记本屏幕",
+    ms_pd_software: "软件亮度",
+    ms_pd_software_desc: "对无硬件控制的 X11 输出使用 xrandr",
+
+    // Grab and Move
+    ms_gm_modifier: "修饰键",
+    ms_gm_modifier_desc: "按住此键并用左键拖动以移动窗口",
+    ms_gm_resize: "用右键调整大小",
+    ms_gm_resize_desc: "修饰键 + 右键拖动可调整窗口大小",
+    ms_gm_game_mode: "全屏时暂停",
+    ms_gm_game_mode_desc: "活动窗口全屏时不执行任何操作",
+
+    // Alt Window Cycle
+    ms_awc_next: "下一个窗口",
+    ms_awc_prev: "上一个窗口",
+    ms_awc_minimized: "包括最小化的窗口",
+    ms_awc_minimized_desc: "也恢复并切换最小化的窗口",
+    ms_awc_all_desktops: "所有虚拟桌面",
+    ms_awc_all_desktops_desc: "包括其他虚拟桌面上的窗口",
+    ms_awc_timeout: "继续循环的时间窗口 (毫秒)",
+
+    // Command Not Found
+    ms_cnf_install: "安装 shell 钩子",
+    ms_cnf_install_desc: "模块启动时为所选 shell 添加“命令未找到”处理程序",
+    ms_cnf_shells: "Shell",
+    ms_cnf_fuzzy: "建议相似命令",
+    ms_cnf_fuzzy_desc: "显示名称相似的已安装命令",
+    ms_cnf_timeout: "查找超时 (毫秒)",
 };

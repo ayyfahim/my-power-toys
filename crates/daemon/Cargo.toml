@@ -13,19 +13,19 @@ path = "src/main.rs"
 mpt-common = { path = "../common" }
 mpt-always-on-top = { path = "../always-on-top" }
 mpt-awake = { path = "../awake" }
-mpt-paste-plain = { path = "../paste-plain" }
+mpt-paste-plain = { path = "../paste-plain", default-features = false }
 mpt-color-picker = { path = "../color-picker", default-features = false }
-mpt-hosts-editor = { path = "../hosts-editor" }
-mpt-bulk-rename = { path = "../bulk-rename" }
-mpt-image-resizer = { path = "../image-resizer" }
+mpt-hosts-editor = { path = "../hosts-editor", default-features = false }
+mpt-bulk-rename = { path = "../bulk-rename", default-features = false }
+mpt-image-resizer = { path = "../image-resizer", default-features = false }
 mpt-key-manager = { path = "../key-manager" }
 mpt-mouse-utils = { path = "../mouse-utils" }
-mpt-screen-ruler = { path = "../screen-ruler" }
-mpt-text-extractor = { path = "../text-extractor" }
-mpt-shortcut-guide = { path = "../shortcut-guide" }
+mpt-screen-ruler = { path = "../screen-ruler", default-features = false }
+mpt-text-extractor = { path = "../text-extractor", default-features = false }
+mpt-shortcut-guide = { path = "../shortcut-guide", default-features = false }
 mpt-app-launcher = { path = "../app-launcher", default-features = false }
-mpt-fancy-zones = { path = "../fancy-zones" }
-mpt-peek = { path = "../peek" }
+mpt-fancy-zones = { path = "../fancy-zones", default-features = false }
+mpt-peek = { path = "../peek", default-features = false }
 mpt-command-palette = { path = "../command-palette", default-features = false }
 mpt-light-switch = { path = "../light-switch" }
 mpt-quick-accent = { path = "../quick-accent", default-features = false }

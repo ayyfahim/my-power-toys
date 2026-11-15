@@ -310,4 +310,131 @@ pub(super) static ES: Tr = Tr {
     ms_br_fmt_capitalize: "Aa Aa",
     ms_br_enumerate: "Enumerar elementos",
     ms_br_enumerate_desc: "Activar patrones de contador como ${}, ${start=1;padding=3} en el reemplazo",
+
+    // General (new modules)
+    ms_general: "General",
+    ms_shortcuts: "Atajos",
+    ms_shortcut_hint: "Formato: Super+Shift+X. Déjalo vacío para desactivarlo. Los cambios se aplican tras reiniciar el demonio.",
+    ms_excluded_apps_list: "Apps excluidas (separadas por comas)",
+
+    // Advanced Paste
+    ms_pp_ui_shortcut: "Abrir Pegado avanzado",
+    ms_pp_markdown_shortcut: "Pegar como Markdown",
+    ms_pp_json_shortcut: "Pegar como JSON",
+    ms_pp_preview: "Vista previa del portapapeles",
+    ms_pp_preview_desc: "Mostrar el contenido del portapapeles en el selector",
+    ms_pp_close_focus: "Cerrar al perder el foco",
+    ms_pp_close_focus_desc: "Ocultar el selector cuando se activa otra ventana",
+    ms_pp_as_file: "Pegar como archivo",
+    ms_pp_as_file_desc: "Mostrar los formatos .txt, .png y .html en el selector",
+    ms_pp_ai: "Acciones de IA",
+    ms_pp_ai_desc: "Usar un endpoint compatible con OpenAI para transformaciones con IA. La clave de API se lee de una variable de entorno.",
+    ms_pp_ai_endpoint: "URL del endpoint",
+    ms_pp_ai_model: "Modelo",
+    ms_pp_ai_key_env: "Variable de entorno de la clave de API",
+
+    // Screen Ruler
+    ms_sr_shortcut: "Atajo de activación",
+    ms_sr_feet: "Dibujar extremos en la cruz",
+    ms_sr_feet_desc: "Añadir líneas perpendiculares cortas al final de las líneas de medida",
+    ms_sr_per_channel: "Detección de bordes por canal de color",
+    ms_sr_per_channel_desc: "Comparar cada canal con la tolerancia en lugar de la diferencia total",
+    ms_sr_tolerance: "Tolerancia de píxeles (0-255)",
+    ms_sr_color: "Color de las líneas",
+    ms_sr_units: "Unidades de medida",
+
+    // Crop and Lock
+    ms_cal_thumbnail: "Miniatura",
+    ms_cal_reparent: "Reanclar",
+    ms_cal_screenshot: "Captura de pantalla",
+
+    // File Locksmith
+    ms_fl_context_menu: "Entrada en el gestor de archivos",
+    ms_fl_context_menu_desc: "Añadir «Desbloquear con File Locksmith» a Nautilus, Dolphin y Thunar",
+    ms_fl_kill_timeout: "Espera antes de forzar el cierre (ms)",
+    ms_fl_refresh: "Intervalo de actualización (ms, 0 = desactivado)",
+
+    // Environment Variables
+    ms_ev_admin: "Editar variables del sistema",
+    ms_ev_admin_desc: "Permitir editar /etc/environment.d (pide tu contraseña mediante pkexec)",
+    ms_ev_update_session: "Actualizar la sesión actual",
+    ms_ev_update_session_desc: "Aplicar los cambios a las apps que se abran después, sin cerrar sesión",
+
+    // New+
+    ms_np_location: "Carpeta de plantillas",
+    ms_np_hide_ext: "Ocultar extensiones",
+    ms_np_hide_ext_desc: "Mostrar los nombres de plantilla sin extensión en los menús",
+    ms_np_hide_digits: "Ocultar dígitos iniciales",
+    ms_np_hide_digits_desc: "Quitar de los nombres prefijos de orden como «01. »",
+    ms_np_replace_vars: "Reemplazar variables",
+    ms_np_replace_vars_desc: "Resolver $YYYY, %USERNAME%, $PARENT_FOLDER_NAME… en los nombres creados",
+    ms_np_context_menu: "Menús del gestor de archivos",
+    ms_np_context_menu_desc: "Generar scripts de Nautilus y un menú de servicio de Dolphin",
+    ms_np_sync_xdg: "Sincronizar con plantillas XDG",
+    ms_np_sync_xdg_desc: "Enlazar las plantillas en la carpeta Plantillas de XDG",
+
+    // ZoomIt
+    ms_zi_zoom: "Zoom",
+    ms_zi_draw: "Dibujar",
+    ms_zi_break: "Temporizador de descanso",
+    ms_zi_live_zoom: "Zoom en vivo",
+    ms_zi_record: "Grabar",
+    ms_zi_snip: "Recorte al portapapeles",
+    ms_zi_snip_save: "Recorte a archivo",
+    ms_zi_animate: "Animar el zoom",
+    ms_zi_animate_desc: "Animar suavemente al acercar y alejar",
+    ms_zi_smooth: "Imagen suavizada",
+    ms_zi_smooth_desc: "Filtrar la imagen ampliada en lugar de mostrar los píxeles",
+    ms_zi_pen_color: "Color del lápiz",
+    ms_zi_break_timeout: "Duración del descanso (minutos)",
+    ms_zi_frame_rate: "Fotogramas por segundo de la grabación",
+    ms_zi_audio: "Grabar audio",
+    ms_zi_audio_desc: "Capturar el micrófono durante la grabación",
+    ms_zi_snip_copy: "Copiar los recortes guardados",
+    ms_zi_snip_copy_desc: "Copiar también la imagen al portapapeles al guardar un recorte",
+    ms_zi_screenshot_dir: "Carpeta de capturas (vacío = ~/Pictures)",
+    ms_zi_recording_dir: "Carpeta de grabaciones (vacío = ~/Videos)",
+
+    // Power Display
+    ms_pd_brightness_up: "Subir el brillo",
+    ms_pd_brightness_down: "Bajar el brillo",
+    ms_pd_step: "Paso de brillo (%)",
+    ms_pd_osd: "Mostrar notificación",
+    ms_pd_osd_desc: "Mostrar el nuevo nivel de brillo tras un atajo",
+    ms_pd_restore: "Restaurar al iniciar",
+    ms_pd_restore_desc: "Volver a aplicar los últimos valores al iniciar el módulo",
+    ms_pd_linked: "Vincular niveles de monitores",
+    ms_pd_linked_desc: "Un cambio de brillo se aplica a todos los monitores",
+    ms_pd_backends: "Métodos de control",
+    ms_pd_ddc: "DDC/CI",
+    ms_pd_ddc_desc: "Monitores externos mediante ddcutil (requiere el grupo i2c)",
+    ms_pd_backlight: "Retroiluminación",
+    ms_pd_backlight_desc: "Pantallas de portátil mediante /sys/class/backlight",
+    ms_pd_software: "Brillo por software",
+    ms_pd_software_desc: "Usar xrandr en salidas X11 sin control por hardware",
+
+    // Grab and Move
+    ms_gm_modifier: "Tecla modificadora",
+    ms_gm_modifier_desc: "Mantén esta tecla y arrastra con el botón izquierdo para mover una ventana",
+    ms_gm_resize: "Redimensionar con el botón derecho",
+    ms_gm_resize_desc: "Modificador + arrastrar con el botón derecho cambia el tamaño",
+    ms_gm_game_mode: "Pausar en pantalla completa",
+    ms_gm_game_mode_desc: "No hacer nada si la ventana activa está en pantalla completa",
+
+    // Alt Window Cycle
+    ms_awc_next: "Ventana siguiente",
+    ms_awc_prev: "Ventana anterior",
+    ms_awc_minimized: "Incluir ventanas minimizadas",
+    ms_awc_minimized_desc: "Restaurar y recorrer también las ventanas minimizadas",
+    ms_awc_all_desktops: "Todos los escritorios virtuales",
+    ms_awc_all_desktops_desc: "Incluir ventanas de otros escritorios virtuales",
+    ms_awc_timeout: "Continuar el ciclo durante (ms)",
+
+    // Command Not Found
+    ms_cnf_install: "Instalar los hooks del shell",
+    ms_cnf_install_desc: "Añadir un gestor de «comando no encontrado» a los shells elegidos al iniciar el módulo",
+    ms_cnf_shells: "Shells",
+    ms_cnf_fuzzy: "Sugerir comandos similares",
+    ms_cnf_fuzzy_desc: "Mostrar comandos instalados con un nombre parecido",
+    ms_cnf_timeout: "Tiempo máximo de búsqueda (ms)",
 };

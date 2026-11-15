@@ -310,4 +310,131 @@ pub(super) static EN: Tr = Tr {
     ms_br_fmt_capitalize: "Aa Aa",
     ms_br_enumerate: "Enumerate items",
     ms_br_enumerate_desc: "Enable counter patterns like ${}, ${start=1;padding=3} in replacement",
+
+    // General (new modules)
+    ms_general: "General",
+    ms_shortcuts: "Shortcuts",
+    ms_shortcut_hint: "Format: Super+Shift+X. Leave empty to disable. Changes apply after restarting the daemon.",
+    ms_excluded_apps_list: "Excluded apps (comma-separated)",
+
+    // Advanced Paste
+    ms_pp_ui_shortcut: "Open Advanced Paste",
+    ms_pp_markdown_shortcut: "Paste as Markdown",
+    ms_pp_json_shortcut: "Paste as JSON",
+    ms_pp_preview: "Clipboard preview",
+    ms_pp_preview_desc: "Show the clipboard content in the picker",
+    ms_pp_close_focus: "Close when focus is lost",
+    ms_pp_close_focus_desc: "Hide the picker when another window is activated",
+    ms_pp_as_file: "Paste as file",
+    ms_pp_as_file_desc: "List .txt, .png and .html file formats in the picker",
+    ms_pp_ai: "AI actions",
+    ms_pp_ai_desc: "Use an OpenAI-compatible endpoint for AI transformations. The API key is read from an environment variable.",
+    ms_pp_ai_endpoint: "Endpoint URL",
+    ms_pp_ai_model: "Model",
+    ms_pp_ai_key_env: "API key environment variable",
+
+    // Screen Ruler
+    ms_sr_shortcut: "Activation shortcut",
+    ms_sr_feet: "Draw feet on cross",
+    ms_sr_feet_desc: "Add short perpendicular lines at the ends of the measuring lines",
+    ms_sr_per_channel: "Per color channel edge detection",
+    ms_sr_per_channel_desc: "Compare each channel to the tolerance instead of the total difference",
+    ms_sr_tolerance: "Pixel tolerance (0-255)",
+    ms_sr_color: "Line color",
+    ms_sr_units: "Units of measure",
+
+    // Crop and Lock
+    ms_cal_thumbnail: "Thumbnail",
+    ms_cal_reparent: "Reparent",
+    ms_cal_screenshot: "Screenshot",
+
+    // File Locksmith
+    ms_fl_context_menu: "File manager menu entry",
+    ms_fl_context_menu_desc: "Add \"Unlock with File Locksmith\" to Nautilus, Dolphin and Thunar",
+    ms_fl_kill_timeout: "Wait before force kill (ms)",
+    ms_fl_refresh: "Refresh interval (ms, 0 = off)",
+
+    // Environment Variables
+    ms_ev_admin: "Edit system variables",
+    ms_ev_admin_desc: "Allow editing /etc/environment.d (asks for your password through pkexec)",
+    ms_ev_update_session: "Update the running session",
+    ms_ev_update_session_desc: "Apply saved changes to newly launched apps without logging out",
+
+    // New+
+    ms_np_location: "Templates folder",
+    ms_np_hide_ext: "Hide file extensions",
+    ms_np_hide_ext_desc: "Show template names without their extension in menus",
+    ms_np_hide_digits: "Hide leading digits",
+    ms_np_hide_digits_desc: "Strip ordering prefixes like \"01. \" from names",
+    ms_np_replace_vars: "Replace variables",
+    ms_np_replace_vars_desc: "Resolve $YYYY, %USERNAME%, $PARENT_FOLDER_NAME… in created names",
+    ms_np_context_menu: "File manager menus",
+    ms_np_context_menu_desc: "Generate Nautilus scripts and a Dolphin service menu",
+    ms_np_sync_xdg: "Sync with XDG Templates",
+    ms_np_sync_xdg_desc: "Link templates into the XDG Templates folder",
+
+    // ZoomIt
+    ms_zi_zoom: "Zoom",
+    ms_zi_draw: "Draw",
+    ms_zi_break: "Break timer",
+    ms_zi_live_zoom: "Live zoom",
+    ms_zi_record: "Record",
+    ms_zi_snip: "Snip to clipboard",
+    ms_zi_snip_save: "Snip to file",
+    ms_zi_animate: "Animate zoom",
+    ms_zi_animate_desc: "Smoothly animate zooming in and out",
+    ms_zi_smooth: "Smooth image",
+    ms_zi_smooth_desc: "Filter the zoomed image instead of showing raw pixels",
+    ms_zi_pen_color: "Pen color",
+    ms_zi_break_timeout: "Break length (minutes)",
+    ms_zi_frame_rate: "Recording frame rate",
+    ms_zi_audio: "Record audio",
+    ms_zi_audio_desc: "Capture microphone audio while recording",
+    ms_zi_snip_copy: "Copy saved snips",
+    ms_zi_snip_copy_desc: "Also copy the image to the clipboard when saving a snip",
+    ms_zi_screenshot_dir: "Screenshot folder (empty = ~/Pictures)",
+    ms_zi_recording_dir: "Recording folder (empty = ~/Videos)",
+
+    // Power Display
+    ms_pd_brightness_up: "Brightness up",
+    ms_pd_brightness_down: "Brightness down",
+    ms_pd_step: "Brightness step (%)",
+    ms_pd_osd: "Show notification",
+    ms_pd_osd_desc: "Show the new brightness level after a shortcut",
+    ms_pd_restore: "Restore on startup",
+    ms_pd_restore_desc: "Re-apply the last values when the module starts",
+    ms_pd_linked: "Link monitor levels",
+    ms_pd_linked_desc: "A brightness change applies to all monitors",
+    ms_pd_backends: "Control methods",
+    ms_pd_ddc: "DDC/CI",
+    ms_pd_ddc_desc: "External monitors through ddcutil (needs the i2c group)",
+    ms_pd_backlight: "Backlight",
+    ms_pd_backlight_desc: "Laptop panels through /sys/class/backlight",
+    ms_pd_software: "Software brightness",
+    ms_pd_software_desc: "Use xrandr on X11 outputs without hardware control",
+
+    // Grab and Move
+    ms_gm_modifier: "Modifier key",
+    ms_gm_modifier_desc: "Hold this key and drag with the left button to move a window",
+    ms_gm_resize: "Resize with right button",
+    ms_gm_resize_desc: "Modifier + right drag resizes the window",
+    ms_gm_game_mode: "Pause in fullscreen",
+    ms_gm_game_mode_desc: "Do nothing while the active window is fullscreen",
+
+    // Alt Window Cycle
+    ms_awc_next: "Next window",
+    ms_awc_prev: "Previous window",
+    ms_awc_minimized: "Include minimized windows",
+    ms_awc_minimized_desc: "Restore and cycle through minimized windows too",
+    ms_awc_all_desktops: "All virtual desktops",
+    ms_awc_all_desktops_desc: "Include windows on other virtual desktops",
+    ms_awc_timeout: "Continue the cycle within (ms)",
+
+    // Command Not Found
+    ms_cnf_install: "Install shell hooks",
+    ms_cnf_install_desc: "Add a command-not-found handler to the selected shells when the module starts",
+    ms_cnf_shells: "Shells",
+    ms_cnf_fuzzy: "Suggest similar commands",
+    ms_cnf_fuzzy_desc: "Show installed commands with a similar name",
+    ms_cnf_timeout: "Lookup timeout (ms)",
 };
