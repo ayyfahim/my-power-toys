@@ -3616,10 +3616,16 @@ name = "mpt-crop-and-lock"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "eframe",
+ "egui",
+ "image 0.25.9",
  "mpt-common",
+ "raw-window-handle",
  "serde",
  "toml",
  "tracing",
+ "tracing-subscriber",
+ "x11rb",
 ]
 
 [[package]]
@@ -3673,10 +3679,14 @@ name = "mpt-environment-variables"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "dirs 6.0.0",
+ "eframe",
+ "egui",
  "mpt-common",
  "serde",
  "toml",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3701,10 +3711,17 @@ name = "mpt-file-locksmith"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "dirs 6.0.0",
+ "eframe",
+ "egui",
+ "libc",
  "mpt-common",
+ "rfd",
+ "scopeguard",
  "serde",
  "toml",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3829,10 +3846,13 @@ name = "mpt-power-display"
 version = "0.3.30"
 dependencies = [
  "anyhow",
+ "eframe",
+ "egui",
  "mpt-common",
  "serde",
  "toml",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
