@@ -1,6 +1,23 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 
+use crate::characters;
+use crate::config::{ScreenRect, ToolbarPosition, Trigger, initial_index, toolbar_origin};
+
+/// How the overlay should be shown.
+#[derive(Debug, Clone, Copy)]
+pub struct OverlayOptions {
+    pub position: ToolbarPosition,
+    pub trigger: Trigger,
+    /// Upstream `StartSelectionFromTheLeft`.
+    pub start_from_left: bool,
+    /// Upstream `ShowUnicodeDescription`.
+    pub show_description: bool,
+}
+
+const DESCRIPTION_HEIGHT: f32 = 18.0;
+const DESCRIPTION_MIN_WIDTH: f32 = 340.0;
+
 const CHAR_BUTTON_SIZE: f32 = 44.0;
 const CHAR_BUTTON_SPACING: f32 = 6.0;
 const TOOLBAR_PADDING: f32 = 10.0;
@@ -16,6 +33,7 @@ const BORDER_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(80, 8
 
 struct AccentOverlayApp {
     accents: Vec<char>,
+    show_description: bool,
     selected_idx: usize,
     result: Arc<Mutex<Option<char>>>,
     should_close: bool,
@@ -24,10 +42,12 @@ struct AccentOverlayApp {
 }
 
 impl AccentOverlayApp {
-    fn new(accents: Vec<char>, result: Arc<Mutex<Option<char>>>) -> Self {
+    fn new(accents: Vec<char>, options: OverlayOptions, result: Arc<Mutex<Option<char>>>) -> Self {
+        let selected_idx = initial_index(accents.len(), options.trigger, options.start_from_left);
         Self {
             accents,
-            selected_idx: 0,
+            show_description: options.show_description,
+            selected_idx,
             result,
             should_close: false,
             had_focus: false,
@@ -139,6 +159,17 @@ impl eframe::App for AccentOverlayApp {
                     }
                 });
 
+                if self.show_description
+                    && let Some(&ch) = self.accents.get(self.selected_idx)
+                {
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(characters::unicode_description(ch))
+                            .size(11.0)
+                            .color(TEXT_PRIMARY),
+                    );
+                }
+
                 // Hint line
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -159,39 +190,29 @@ impl eframe::App for AccentOverlayApp {
 }
 
 /// Run the accent overlay. Returns the selected character or None if cancelled.
-pub fn run_overlay(accents: &[char], position: &str) -> Option<char> {
+pub fn run_overlay(accents: &[char], options: &OverlayOptions) -> Option<char> {
     let result = Arc::new(Mutex::new(None));
     let result_clone = result.clone();
     let accents_vec = accents.to_vec();
+    let options = *options;
     let n = accents.len();
 
-    let toolbar_width = n as f32 * (CHAR_BUTTON_SIZE + CHAR_BUTTON_SPACING) + TOOLBAR_PADDING * 2.0;
-    let toolbar_height = CHAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0 + 24.0; // extra for hint
+    let mut toolbar_width =
+        n as f32 * (CHAR_BUTTON_SIZE + CHAR_BUTTON_SPACING) + TOOLBAR_PADDING * 2.0;
+    let mut toolbar_height = CHAR_BUTTON_SIZE + TOOLBAR_PADDING * 2.0 + 24.0; // extra for hint
+    if options.show_description {
+        toolbar_width = toolbar_width.max(DESCRIPTION_MIN_WIDTH);
+        toolbar_height += DESCRIPTION_HEIGHT;
+    }
 
-    let (cx, cy) = get_cursor_position().unwrap_or((800, 400));
-
-    let (wx, wy) = match position {
-        "above-cursor" => (
-            cx - toolbar_width as i32 / 2,
-            cy - toolbar_height as i32 - 20,
-        ),
-        "below-cursor" => (cx - toolbar_width as i32 / 2, cy + 30),
-        "top-center" | "bottom-center" => {
-            // Center horizontally on screen, use cursor Y as fallback
-            (
-                cx - toolbar_width as i32 / 2,
-                cy - toolbar_height as i32 / 2,
-            )
-        }
-        _ => (
-            cx - toolbar_width as i32 / 2,
-            cy - toolbar_height as i32 - 20,
-        ),
-    };
-
-    // Ensure window stays on screen
-    let wx = wx.max(10);
-    let wy = wy.max(10);
+    let cursor = get_cursor_position().unwrap_or((800, 400));
+    let screen = monitor_at(cursor);
+    let (wx, wy) = toolbar_origin(
+        options.position,
+        cursor,
+        screen,
+        (toolbar_width as i32, toolbar_height as i32),
+    );
 
     let on_x11 = std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_ok();
 
@@ -218,7 +239,11 @@ pub fn run_overlay(accents: &[char], position: &str) -> Option<char> {
         native_options,
         Box::new(move |cc| {
             setup_visuals(&cc.egui_ctx);
-            Ok(Box::new(AccentOverlayApp::new(accents_vec, result_clone)))
+            Ok(Box::new(AccentOverlayApp::new(
+                accents_vec,
+                options,
+                result_clone,
+            )))
         }),
     );
 
@@ -233,6 +258,31 @@ fn setup_visuals(ctx: &egui::Context) {
     visuals.window_stroke = egui::Stroke::NONE;
     visuals.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
     ctx.set_visuals(visuals);
+}
+
+/// Bounds of the monitor containing `point` (primary/first as fallback).
+fn monitor_at(point: (i32, i32)) -> ScreenRect {
+    let monitors = mpt_common::monitor::detect_monitors().unwrap_or_default();
+    let rect = |m: &mpt_common::monitor::Monitor| ScreenRect {
+        x: m.x,
+        y: m.y,
+        width: m.width as i32,
+        height: m.height as i32,
+    };
+    monitors
+        .iter()
+        .map(rect)
+        .find(|r| {
+            point.0 >= r.x && point.0 < r.x + r.width && point.1 >= r.y && point.1 < r.y + r.height
+        })
+        .or_else(|| monitors.iter().find(|m| m.is_primary).map(rect))
+        .or_else(|| monitors.first().map(rect))
+        .unwrap_or(ScreenRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        })
 }
 
 fn get_cursor_position() -> Option<(i32, i32)> {

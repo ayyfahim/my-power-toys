@@ -3,6 +3,7 @@ pub mod config;
 pub mod monitor;
 #[cfg(feature = "gui")]
 pub mod overlay;
+pub mod usage;
 
 use anyhow::Result;
 use config::QuickAccentConfig;
