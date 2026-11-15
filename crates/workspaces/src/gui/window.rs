@@ -411,6 +411,24 @@ impl WorkspacesApp {
                     self.capture_workspace();
                 }
 
+                // Sort order (upstream SortBy)
+                let mut sort_by = self.config.sort_by;
+                egui::ComboBox::from_id_salt("ws_sort_by")
+                    .selected_text(
+                        egui::RichText::new(format!("Sort: {}", sort_by.label()))
+                            .size(theme::FONT_SMALL)
+                            .color(theme::TEXT_SECONDARY),
+                    )
+                    .show_ui(ui, |ui| {
+                        for option in config::SortBy::ALL {
+                            ui.selectable_value(&mut sort_by, option, option.label());
+                        }
+                    });
+                if sort_by != self.config.sort_by {
+                    self.config.sort_by = sort_by;
+                    self.save_config();
+                }
+
                 // Workspace count
                 ui.label(
                     egui::RichText::new(format!(
@@ -490,10 +508,13 @@ impl WorkspacesApp {
             let ws_count = self.config.workspaces.len();
             let ctx = ui.ctx().clone();
 
+            let order = self.config.sorted_indices();
+            debug_assert_eq!(order.len(), ws_count);
+
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for i in 0..ws_count {
+                    for i in order {
                         let ws = self.config.workspaces[i].clone();
                         self.draw_workspace_card(&ctx, ui, i, &ws, &mut action);
                         ui.add_space(4.0);
@@ -558,7 +579,11 @@ impl WorkspacesApp {
 
         // App count + last launched
         let app_count = ws.app_count();
-        let last = ws.last_launched.as_deref().unwrap_or("Never launched");
+        let last = ws
+            .last_launched
+            .as_deref()
+            .map(|t| format!("Last launched {}", config::format_timestamp(t)))
+            .unwrap_or_else(|| "Never launched".to_string());
         let info_text = format!(
             "{} app{}  \u{00B7}  {}",
             app_count,

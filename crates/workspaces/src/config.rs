@@ -4,11 +4,110 @@ fn default_true() -> bool {
     true
 }
 
+pub const DEFAULT_HOTKEY: &str = "Super+Ctrl+W";
+
+fn default_hotkey() -> String {
+    DEFAULT_HOTKEY.to_string()
+}
+
+/// Order of the workspace list in the editor (upstream `SortBy`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SortBy {
+    /// Most recently launched first; never-launched ones last (by creation).
+    #[default]
+    #[serde(alias = "LastLaunched")]
+    LastLaunched,
+    /// Newest first.
+    #[serde(alias = "Created")]
+    Created,
+    /// Alphabetical, case-insensitive.
+    #[serde(alias = "Name")]
+    Name,
+}
+
+impl SortBy {
+    pub const ALL: [SortBy; 3] = [SortBy::LastLaunched, SortBy::Created, SortBy::Name];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortBy::LastLaunched => "Last launched",
+            SortBy::Created => "Created",
+            SortBy::Name => "Name",
+        }
+    }
+}
+
 /// Top-level configuration for the Workspaces module.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspacesConfig {
     #[serde(default)]
     pub workspaces: Vec<Workspace>,
+    /// Hotkey that opens the editor (upstream `Hotkey`).
+    #[serde(default = "default_hotkey")]
+    pub hotkey: String,
+    /// Editor list order (upstream `SortBy`).
+    #[serde(default)]
+    pub sort_by: SortBy,
+}
+
+impl Default for WorkspacesConfig {
+    fn default() -> Self {
+        Self {
+            workspaces: Vec::new(),
+            hotkey: default_hotkey(),
+            sort_by: SortBy::default(),
+        }
+    }
+}
+
+/// Parse an RFC 3339 timestamp; `None` if missing or malformed.
+pub fn parse_timestamp(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(s.trim()).ok()
+}
+
+/// Human-readable local time for a stored timestamp (falls back to the raw
+/// string when it can't be parsed).
+pub fn format_timestamp(s: &str) -> String {
+    match parse_timestamp(s) {
+        Some(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+        None => s.to_string(),
+    }
+}
+
+impl WorkspacesConfig {
+    /// Indices into `workspaces` in display order for `sort_by`.
+    pub fn sorted_indices(&self) -> Vec<usize> {
+        sorted_indices(&self.workspaces, self.sort_by)
+    }
+}
+
+/// Indices of `workspaces` ordered by `sort_by`. Stable, so equal keys keep
+/// their stored order.
+pub fn sorted_indices(workspaces: &[Workspace], sort_by: SortBy) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..workspaces.len()).collect();
+    let created = |i: usize| parse_timestamp(&workspaces[i].created_at);
+    let launched = |i: usize| {
+        workspaces[i]
+            .last_launched
+            .as_deref()
+            .and_then(parse_timestamp)
+    };
+    match sort_by {
+        SortBy::Name => idx.sort_by_cached_key(|&i| workspaces[i].name.to_lowercase()),
+        // Option ordering puts None first, so Reverse puts it last.
+        SortBy::Created => idx.sort_by_key(|&i| std::cmp::Reverse(created(i))),
+        SortBy::LastLaunched => idx.sort_by_key(|&i| {
+            (
+                std::cmp::Reverse(launched(i)),
+                std::cmp::Reverse(created(i)),
+            )
+        }),
+    }
+    idx
 }
 
 /// A saved workspace: a named collection of apps with positions.
@@ -142,6 +241,61 @@ mod tests {
     fn default_config_is_empty() {
         let config = WorkspacesConfig::default();
         assert!(config.workspaces.is_empty());
+        assert_eq!(config.hotkey, DEFAULT_HOTKEY);
+        assert_eq!(config.sort_by, SortBy::LastLaunched);
+    }
+
+    fn ws(name: &str, created: &str, launched: Option<&str>) -> Workspace {
+        Workspace {
+            created_at: created.into(),
+            last_launched: launched.map(String::from),
+            ..Workspace::new(name, vec![])
+        }
+    }
+
+    fn sample() -> Vec<Workspace> {
+        vec![
+            ws("beta", "2025-01-02T10:00:00+00:00", None),
+            ws(
+                "Alpha",
+                "2025-01-01T10:00:00+00:00",
+                Some("2025-02-01T10:00:00+00:00"),
+            ),
+            ws(
+                "gamma",
+                "2025-01-03T10:00:00+00:00",
+                Some("2025-01-15T10:00:00+00:00"),
+            ),
+            ws("delta", "garbage", None),
+        ]
+    }
+
+    #[test]
+    fn sort_by_name() {
+        assert_eq!(sorted_indices(&sample(), SortBy::Name), vec![1, 0, 3, 2]);
+    }
+
+    #[test]
+    fn sort_by_created_newest_first() {
+        assert_eq!(sorted_indices(&sample(), SortBy::Created), vec![2, 0, 1, 3]);
+    }
+
+    #[test]
+    fn sort_by_last_launched() {
+        assert_eq!(
+            sorted_indices(&sample(), SortBy::LastLaunched),
+            vec![1, 2, 0, 3]
+        );
+    }
+
+    #[test]
+    fn legacy_config_parses() {
+        let cfg: WorkspacesConfig = toml::from_str("workspaces = []\n").unwrap();
+        assert_eq!(cfg.hotkey, DEFAULT_HOTKEY);
+        let cfg: WorkspacesConfig = toml::from_str("sort_by = \"Name\"\n").unwrap();
+        assert_eq!(cfg.sort_by, SortBy::Name);
+        let cfg: WorkspacesConfig = toml::from_str("sort_by = \"created\"\n").unwrap();
+        assert_eq!(cfg.sort_by, SortBy::Created);
     }
 
     #[test]
@@ -190,6 +344,8 @@ mod tests {
     #[test]
     fn roundtrip_toml() {
         let config = WorkspacesConfig {
+            hotkey: DEFAULT_HOTKEY.into(),
+            sort_by: SortBy::Name,
             workspaces: vec![Workspace::new(
                 "Dev",
                 vec![AppEntry {
