@@ -4,6 +4,9 @@ pub mod edges;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod measurement;
+
+#[cfg(test)]
+mod parity_tests;
 #[cfg(feature = "gui")]
 pub mod screenshot;
 

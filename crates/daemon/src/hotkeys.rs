@@ -326,3 +326,7 @@ fn hotkey_key_to_keysyms(key: &str) -> Vec<u32> {
         _ => vec![],
     }
 }
+
+#[cfg(test)]
+#[path = "parity_tests.rs"]
+mod parity_tests;

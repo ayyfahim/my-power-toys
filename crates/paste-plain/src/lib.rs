@@ -3,6 +3,8 @@ pub mod ai;
 pub mod clipboard;
 pub mod config;
 pub mod json;
+#[cfg(test)]
+mod parity_tests;
 #[cfg(feature = "gui")]
 pub mod picker;
 

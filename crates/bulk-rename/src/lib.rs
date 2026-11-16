@@ -4,6 +4,9 @@ pub mod gui;
 mod renamer;
 pub mod tokens;
 
+#[cfg(test)]
+mod parity_tests;
+
 use anyhow::Result;
 use config::BulkRenameConfig;
 use mpt_common::config::load_module_config;

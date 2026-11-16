@@ -1,5 +1,8 @@
 mod resizer;
 
+#[cfg(test)]
+mod parity_tests;
+
 #[cfg(feature = "gui")]
 pub mod gui;
 

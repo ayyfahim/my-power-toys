@@ -299,3 +299,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod parity_tests;

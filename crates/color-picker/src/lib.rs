@@ -6,6 +6,9 @@ pub mod names;
 pub mod picker;
 pub mod screenshot;
 
+#[cfg(test)]
+mod parity_tests;
+
 use anyhow::Result;
 use mpt_common::hotkey::{Hotkey, Modifier};
 use mpt_common::module::PowerModule;
