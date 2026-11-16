@@ -178,3 +178,6 @@ impl Drop for KeyManager {
         self.stop_worker();
     }
 }
+
+#[cfg(test)]
+mod parity_tests;

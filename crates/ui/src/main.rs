@@ -11,6 +11,9 @@ mod views;
 mod views_extra;
 mod widgets;
 
+#[cfg(test)]
+mod parity_tests;
+
 use iced::theme::Palette;
 use iced::time;
 use iced::{Color, Subscription, Task, Theme};

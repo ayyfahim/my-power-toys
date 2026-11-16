@@ -97,3 +97,6 @@ pub fn find_gui_binary() -> std::path::PathBuf {
     }
     "mpt-quick-accent".into()
 }
+
+#[cfg(test)]
+mod parity_tests;

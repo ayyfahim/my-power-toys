@@ -317,3 +317,6 @@ mod tests {
         assert!(m.controls.find_my_mouse_trigger.load(Ordering::Relaxed));
     }
 }
+
+#[cfg(test)]
+mod parity_tests;

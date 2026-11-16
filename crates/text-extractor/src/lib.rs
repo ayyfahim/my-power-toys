@@ -1,8 +1,12 @@
 pub mod ocr;
+
 #[cfg(feature = "gui")]
 pub mod overlay;
 #[cfg(feature = "gui")]
 pub mod screenshot;
+
+#[cfg(test)]
+mod parity_tests;
 
 use anyhow::Result;
 use mpt_common::hotkey::{Hotkey, Modifier};

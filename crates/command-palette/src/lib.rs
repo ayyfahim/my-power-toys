@@ -6,6 +6,9 @@ pub mod providers;
 pub mod search;
 pub mod x11;
 
+#[cfg(test)]
+mod parity_tests;
+
 use anyhow::Result;
 use mpt_common::hotkey::{Hotkey, Modifier};
 use mpt_common::module::PowerModule;

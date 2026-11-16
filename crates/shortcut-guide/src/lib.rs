@@ -192,3 +192,6 @@ mod tests {
         assert_eq!(m.default_hotkey().unwrap().to_string(), "Super+Shift+F1");
     }
 }
+
+#[cfg(test)]
+mod parity_tests;

@@ -187,3 +187,6 @@ mod tests {
         assert!(parsed.enable_space_to_activate);
     }
 }
+
+#[cfg(test)]
+mod parity_tests;

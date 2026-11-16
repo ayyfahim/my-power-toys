@@ -204,3 +204,6 @@ fn find_gui_binary() -> std::path::PathBuf {
     // Fallback: rely on PATH
     "mpt-fancy-zones".into()
 }
+
+#[cfg(test)]
+mod parity_tests;

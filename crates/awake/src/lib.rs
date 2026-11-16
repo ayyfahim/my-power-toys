@@ -268,3 +268,6 @@ mod tests {
         assert!(!a.running);
     }
 }
+
+#[cfg(test)]
+mod parity_tests;
