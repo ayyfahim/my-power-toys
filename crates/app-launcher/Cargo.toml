@@ -1,15 +1,36 @@
 [package]
 name = "mpt-app-launcher"
-description = "Quick application launcher with search, frecency ranking and calculator"
+description = "PowerToys Run style launcher: apps, calculator, shell, files, windows, web search and more"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[[bin]]
+name = "mpt-app-launcher"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[features]
+default = ["gui"]
+gui = ["dep:egui", "dep:eframe", "dep:scopeguard", "dep:image", "dep:resvg", "mpt-common/gui"]
 
 [dependencies]
 mpt-common = { path = "../common" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4", "v7"] }
+sha1 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+egui = { workspace = true, optional = true }
+eframe = { workspace = true, optional = true }
+scopeguard = { version = "1", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+resvg = { version = "0.44", default-features = false, optional = true }

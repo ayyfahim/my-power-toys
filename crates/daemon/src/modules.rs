@@ -74,6 +74,33 @@ impl ModuleRegistry {
         let ws = mpt_workspaces::Workspaces::new();
         self.modules.insert(ws.id(), Box::new(ws));
 
+        let crop = mpt_crop_and_lock::CropAndLock::new();
+        self.modules.insert(crop.id(), Box::new(crop));
+
+        let locksmith = mpt_file_locksmith::FileLocksmith::new();
+        self.modules.insert(locksmith.id(), Box::new(locksmith));
+
+        let env_vars = mpt_environment_variables::EnvironmentVariables::new();
+        self.modules.insert(env_vars.id(), Box::new(env_vars));
+
+        let new_plus = mpt_new_plus::NewPlus::new();
+        self.modules.insert(new_plus.id(), Box::new(new_plus));
+
+        let zoom = mpt_zoom_it::ZoomIt::new();
+        self.modules.insert(zoom.id(), Box::new(zoom));
+
+        let display = mpt_power_display::PowerDisplay::new();
+        self.modules.insert(display.id(), Box::new(display));
+
+        let grab = mpt_grab_and_move::GrabAndMove::new();
+        self.modules.insert(grab.id(), Box::new(grab));
+
+        let cycle = mpt_alt_window_cycle::AltWindowCycle::new();
+        self.modules.insert(cycle.id(), Box::new(cycle));
+
+        let cnf = mpt_command_not_found::CommandNotFound::new();
+        self.modules.insert(cnf.id(), Box::new(cnf));
+
         info!("Registered {} module(s)", self.modules.len());
     }
 

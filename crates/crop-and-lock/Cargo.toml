@@ -1,0 +1,34 @@
+[package]
+name = "mpt-crop-and-lock"
+description = "Crop a window region into a live thumbnail window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mpt-crop-and-lock"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[features]
+default = ["gui"]
+gui = [
+    "dep:egui",
+    "dep:eframe",
+    "dep:image",
+    "dep:raw-window-handle",
+    "mpt-common/gui",
+]
+
+[dependencies]
+mpt-common = { path = "../common" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "composite"] }
+egui = { workspace = true, optional = true }
+eframe = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+raw-window-handle = { version = "0.6", optional = true }

@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
             cmd_stop(&module).await?;
         }
         "trigger" => {
-            let module = require_arg(&args, 2, "module id")?;
+            let module = require_arg(&args, 2, "module id or module:action")?;
             cmd_trigger(&module).await?;
         }
         "ping" => cmd_ping().await?,
@@ -62,7 +62,8 @@ fn print_usage() {
          \x20 list              List all modules and their status\n\
          \x20 start <module>    Start a module\n\
          \x20 stop <module>     Stop a module\n\
-         \x20 trigger <module>  Trigger a module's hotkey action\n\
+         \x20 trigger <id>      Trigger a module's hotkey, or a named action\n\
+         \x20                   such as key-manager:reload or zoom-it:draw\n\
          \x20 ping              Check if daemon is running\n\
          \x20 check-update      Check if a new version is available\n\
          \x20 update            Update to the latest version\n\

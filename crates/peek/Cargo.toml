@@ -12,7 +12,15 @@ required-features = ["gui"]
 
 [features]
 default = ["gui"]
-gui = ["dep:egui", "dep:eframe", "dep:scopeguard", "dep:image", "mpt-common/gui"]
+gui = [
+    "dep:egui",
+    "dep:eframe",
+    "dep:scopeguard",
+    "dep:image",
+    "dep:syntect",
+    "dep:pulldown-cmark",
+    "mpt-common/gui",
+]
 
 [dependencies]
 mpt-common = { path = "../common" }
@@ -26,3 +34,10 @@ egui = { workspace = true, optional = true }
 eframe = { workspace = true, optional = true }
 scopeguard = { version = "1", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"], optional = true }
+# Archive listing (pure Rust; listing only, so no compression codecs for zip)
+zip = { version = "9", default-features = false }
+tar = "0.4"
+flate2 = "1"
+# Syntax highlighting without the onig C library
+syntect = { version = "5", default-features = false, features = ["default-fancy"], optional = true }
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }

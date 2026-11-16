@@ -10,22 +10,160 @@ use x11rb::protocol::xinput::{self, ConnectionExt as XiConnectionExt};
 use x11rb::protocol::xproto::{self, ConnectionExt};
 use x11rb::rust_connection::RustConnection;
 
-use crate::config::{FindMyMouseActivation, MouseUtilsConfig};
+use crate::config::{FindMyMouseActivation, MouseUtilsConfig, is_app_excluded, parse_app_list};
+use crate::x11util;
 
 /// Spawn the Find My Mouse monitor thread.
 /// Watches for the configured activation (double Ctrl, shake, etc.) and shows a spotlight overlay.
 pub fn spawn(config: MouseUtilsConfig, stop: Arc<AtomicBool>) -> thread::JoinHandle<()> {
+    spawn_with_trigger(config, Arc::new(AtomicBool::new(false)), stop)
+}
+
+/// Like [`spawn`], but `trigger` can be set from outside (custom shortcut
+/// activation) to toggle the spotlight.
+pub fn spawn_with_trigger(
+    config: MouseUtilsConfig,
+    trigger: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("find-my-mouse".into())
         .spawn(move || {
-            if let Err(e) = run(config, stop) {
+            if let Err(e) = run(config, trigger, stop) {
                 warn!("Find My Mouse stopped: {e}");
             }
         })
         .expect("failed to spawn find-my-mouse thread")
 }
 
-fn run(config: MouseUtilsConfig, stop: Arc<AtomicBool>) -> Result<()> {
+// ── Shake detection (port of upstream SuperSonar::DetectShake) ─────────
+
+#[derive(Debug, Clone, Copy)]
+struct Movement {
+    dx: i64,
+    dy: i64,
+    tick_ms: u64,
+}
+
+/// Detects a mouse "shake": consecutive same-direction movements are merged;
+/// whenever the direction changes, the movements within the last
+/// `interval_ms` are examined. A shake is reported when the total distance
+/// travelled is at least `min_distance` and exceeds the diagonal of the
+/// bounding box of the movement by `factor_percent`%.
+#[derive(Debug, Clone)]
+pub struct ShakeDetector {
+    history: Vec<Movement>,
+    min_distance: f64,
+    interval_ms: u64,
+    factor_percent: f64,
+}
+
+fn sign(v: i64) -> i8 {
+    v.signum() as i8
+}
+
+impl ShakeDetector {
+    pub fn new(min_distance: u32, interval_ms: u32, factor_percent: u32) -> Self {
+        Self {
+            history: Vec::new(),
+            min_distance: min_distance as f64,
+            interval_ms: interval_ms.max(1) as u64,
+            factor_percent: factor_percent.max(1) as f64,
+        }
+    }
+
+    pub fn from_config(config: &MouseUtilsConfig) -> Self {
+        Self::new(
+            config.find_my_mouse_shake_distance,
+            config.find_my_mouse_shake_interval_ms,
+            config.find_my_mouse_shake_factor,
+        )
+    }
+
+    /// Feed a relative pointer movement. Returns `true` when a shake is detected.
+    pub fn push(&mut self, dx: i64, dy: i64, now_ms: u64) -> bool {
+        if dx == 0 && dy == 0 {
+            return false;
+        }
+        match self.history.last_mut() {
+            Some(last) if sign(last.dx) == sign(dx) && sign(last.dy) == sign(dy) => {
+                last.dx += dx;
+                last.dy += dy;
+                false
+            }
+            Some(_) => {
+                self.history.push(Movement {
+                    dx,
+                    dy,
+                    tick_ms: now_ms,
+                });
+                // Direction changed: check for a shake.
+                self.detect(now_ms)
+            }
+            None => {
+                self.history.push(Movement {
+                    dx,
+                    dy,
+                    tick_ms: now_ms,
+                });
+                false
+            }
+        }
+    }
+
+    fn detect(&mut self, now_ms: u64) -> bool {
+        let start = now_ms.saturating_sub(self.interval_ms);
+        self.history.retain(|m| m.tick_ms >= start);
+
+        let (mut x, mut y) = (0i64, 0i64);
+        let (mut min_x, mut max_x, mut min_y, mut max_y) = (0i64, 0i64, 0i64, 0i64);
+        let mut travelled = 0.0f64;
+        for m in &self.history {
+            x += m.dx;
+            y += m.dy;
+            travelled += ((m.dx * m.dx + m.dy * m.dy) as f64).sqrt();
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+        }
+        if travelled < self.min_distance {
+            return false;
+        }
+        let w = (max_x - min_x) as f64;
+        let h = (max_y - min_y) as f64;
+        let diagonal = (w * w + h * h).sqrt();
+        if diagonal > 0.0 && travelled / diagonal > self.factor_percent / 100.0 {
+            self.history.clear();
+            return true;
+        }
+        false
+    }
+}
+
+// ── Main loop ──────────────────────────────────────────────────────────
+
+/// Whether Find My Mouse may activate now (game mode / excluded apps).
+fn activation_allowed(config: &MouseUtilsConfig, conn: &RustConnection, root: u32) -> bool {
+    let Some(active) = x11util::active_window(conn, root) else {
+        return true;
+    };
+    if config.find_my_mouse_game_mode && x11util::is_fullscreen(conn, root, active) {
+        debug!("Find My Mouse: active window is fullscreen (game mode), not activating");
+        return false;
+    }
+    let excluded = parse_app_list(&config.find_my_mouse_excluded_apps);
+    if !excluded.is_empty() {
+        let class = x11util::wm_class(conn, active);
+        if is_app_excluded(&excluded, &class) {
+            debug!("Find My Mouse: focused app {class:?} is excluded");
+            return false;
+        }
+    }
+    true
+}
+
+fn run(config: MouseUtilsConfig, trigger: Arc<AtomicBool>, stop: Arc<AtomicBool>) -> Result<()> {
     let (conn, screen_num) =
         RustConnection::connect(None).context("Find My Mouse: failed to connect to X11")?;
     let screen = &conn.setup().roots[screen_num];
@@ -47,87 +185,93 @@ fn run(config: MouseUtilsConfig, stop: Arc<AtomicBool>) -> Result<()> {
     // Build keycode -> keysym map
     let keymap = build_keymap(&conn)?;
 
-    info!(
-        "Find My Mouse monitor active (activation={:?})",
-        config.find_my_mouse_activation
-    );
+    let activation = config.find_my_mouse_activation;
+    info!("Find My Mouse monitor active (activation={activation:?})");
 
+    let epoch = Instant::now();
+    let mut shake = ShakeDetector::from_config(&config);
+    let mut last_pos: Option<(i16, i16)> = None;
     let mut last_ctrl_time: Option<Instant> = None;
-    let mut spotlight_active = false;
     let mut overlay: Option<SpotlightOverlay> = None;
 
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            break;
+    while !stop.load(Ordering::Relaxed) {
+        let mut want_activate = false;
+        let mut want_dismiss = false;
+
+        // Custom shortcut (delivered by the daemon as a named action).
+        if trigger.swap(false, Ordering::Relaxed) {
+            if overlay.is_some() {
+                want_dismiss = true;
+            } else if activation == FindMyMouseActivation::CustomShortcut {
+                want_activate = true;
+            }
         }
 
-        let event = conn.poll_for_event()?;
-        let Some(event) = event else {
-            // If spotlight is active, update cursor tracking
-            if spotlight_active && let Some(ref mut ov) = overlay {
-                ov.update_cursor()?;
-            }
-            thread::sleep(Duration::from_millis(16)); // ~60fps when active, idle otherwise
-            continue;
-        };
-
-        match &event {
-            x11rb::protocol::Event::XinputRawKeyPress(e) => {
-                let keycode = e.detail as u8;
-                let keysym = keymap.get(&keycode).copied().unwrap_or(0);
-
-                if spotlight_active {
-                    // Any key dismisses the spotlight
-                    debug!("Find My Mouse: dismissed by keypress");
-                    spotlight_active = false;
-                    if let Some(ov) = overlay.take() {
-                        ov.destroy()?;
+        while let Some(event) = conn.poll_for_event()? {
+            match &event {
+                x11rb::protocol::Event::XinputRawKeyPress(e) => {
+                    if overlay.is_some() {
+                        // Any key dismisses the spotlight
+                        want_dismiss = true;
+                        continue;
                     }
-                    continue;
-                }
-
-                // Check for Ctrl press based on activation method
-                match config.find_my_mouse_activation {
-                    FindMyMouseActivation::LeftCtrlTwice
-                    | FindMyMouseActivation::RightCtrlTwice => {
-                        let is_target_ctrl = match config.find_my_mouse_activation {
-                            FindMyMouseActivation::LeftCtrlTwice => {
-                                keysym == xkeysym::key::Control_L
-                            }
-                            FindMyMouseActivation::RightCtrlTwice => {
-                                keysym == xkeysym::key::Control_R
-                            }
-                            _ => false,
-                        };
-
-                        if is_target_ctrl {
-                            let now = Instant::now();
-                            if let Some(last) = last_ctrl_time
-                                && now.duration_since(last) < Duration::from_millis(400)
-                            {
-                                // Double press detected!
-                                debug!("Find My Mouse: double Ctrl detected, activating spotlight");
-                                last_ctrl_time = None;
-                                let ov = SpotlightOverlay::create(&config)?;
-                                overlay = Some(ov);
-                                spotlight_active = true;
-                                continue;
-                            }
+                    let keysym = keymap.get(&(e.detail as u8)).copied().unwrap_or(0);
+                    let target = match activation {
+                        FindMyMouseActivation::LeftCtrlTwice => Some(xkeysym::key::Control_L),
+                        FindMyMouseActivation::RightCtrlTwice => Some(xkeysym::key::Control_R),
+                        _ => None,
+                    };
+                    if target.is_some_and(|t| t == keysym) {
+                        let now = Instant::now();
+                        if let Some(last) = last_ctrl_time
+                            && now.duration_since(last) < Duration::from_millis(400)
+                        {
+                            debug!("Find My Mouse: double Ctrl detected");
+                            last_ctrl_time = None;
+                            want_activate = true;
+                        } else {
                             last_ctrl_time = Some(now);
                         }
+                    } else {
+                        // Another key in between breaks the double-press sequence.
+                        last_ctrl_time = None;
                     }
-                    _ => {}
                 }
-            }
-            x11rb::protocol::Event::XinputRawButtonPress(_) if spotlight_active => {
-                debug!("Find My Mouse: dismissed by click");
-                spotlight_active = false;
-                if let Some(ov) = overlay.take() {
-                    ov.destroy()?;
+                x11rb::protocol::Event::XinputRawButtonPress(_) if overlay.is_some() => {
+                    want_dismiss = true;
                 }
+                _ => {}
             }
-            _ => {}
         }
+
+        // Shake detection via pointer polling.
+        if activation == FindMyMouseActivation::ShakeMouse && overlay.is_none() {
+            let pos = get_cursor_position(&conn, root)?;
+            if let Some((lx, ly)) = last_pos {
+                let now_ms = epoch.elapsed().as_millis() as u64;
+                if shake.push((pos.0 - lx) as i64, (pos.1 - ly) as i64, now_ms) {
+                    debug!("Find My Mouse: shake detected");
+                    want_activate = true;
+                }
+            }
+            last_pos = Some(pos);
+        } else {
+            last_pos = None;
+        }
+
+        if want_dismiss {
+            if let Some(ov) = overlay.take() {
+                debug!("Find My Mouse: dismissed");
+                ov.destroy()?;
+            }
+        } else if want_activate && overlay.is_none() && activation_allowed(&config, &conn, root) {
+            overlay = Some(SpotlightOverlay::create(&config)?);
+        }
+
+        if let Some(ref mut ov) = overlay {
+            ov.update_cursor()?;
+        }
+        thread::sleep(Duration::from_millis(16));
     }
 
     if let Some(ov) = overlay.take() {
@@ -138,6 +282,22 @@ fn run(config: MouseUtilsConfig, stop: Arc<AtomicBool>) -> Result<()> {
     Ok(())
 }
 
+/// Ease-out cubic interpolation progress for the spotlight animation.
+fn spotlight_progress(elapsed_ms: u64, duration_ms: u32) -> f32 {
+    if duration_ms == 0 {
+        return 1.0;
+    }
+    let t = (elapsed_ms as f32 / duration_ms as f32).clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Spotlight radius at a given animation progress: starts at
+/// `radius * initial_zoom` and shrinks to `radius` (upstream behaviour).
+fn spotlight_radius(radius: u32, initial_zoom: u32, progress: f32) -> u32 {
+    let start = radius as f32 * initial_zoom.max(1) as f32;
+    (start + (radius as f32 - start) * progress).round() as u32
+}
+
 /// The spotlight overlay: a fullscreen dark window with a circular "hole" via SHAPE extension.
 struct SpotlightOverlay {
     conn: RustConnection,
@@ -146,9 +306,13 @@ struct SpotlightOverlay {
     screen_width: u16,
     screen_height: u16,
     radius: u32,
-    _bg_color: u32,
-    _spotlight_color: u32,
-    _opacity: f32,
+    initial_zoom: u32,
+    animation_ms: u32,
+    opacity: f32,
+    opacity_atom: u32,
+    started: Instant,
+    last_drawn: Option<(i16, i16, u32)>,
+    animating: bool,
 }
 
 impl SpotlightOverlay {
@@ -162,8 +326,9 @@ impl SpotlightOverlay {
         let depth = screen.root_depth;
 
         let bg_color = parse_hex_color(&config.find_my_mouse_bg_color);
-        let spotlight_color = parse_hex_color(&config.find_my_mouse_spotlight_color);
-        let radius = config.find_my_mouse_spotlight_radius;
+        let radius = config.find_my_mouse_spotlight_radius.max(1);
+        let opacity = config.find_my_mouse_overlay_opacity.clamp(0.0, 1.0);
+        let animation_ms = config.find_my_mouse_animation_ms;
 
         // Create fullscreen override-redirect window
         let window = conn.generate_id()?;
@@ -190,71 +355,66 @@ impl SpotlightOverlay {
             &values,
         )?;
 
-        // Set opacity
-        let opacity_value =
-            (config.find_my_mouse_overlay_opacity.clamp(0.0, 1.0) * u32::MAX as f32) as u32;
-        let opacity_atom = conn
-            .intern_atom(false, b"_NET_WM_WINDOW_OPACITY")?
-            .reply()?
-            .atom;
-        conn.change_property(
-            xproto::PropMode::REPLACE,
-            window,
-            opacity_atom,
-            xproto::AtomEnum::CARDINAL,
-            32,
-            1,
-            &opacity_value.to_ne_bytes(),
-        )?;
+        // Fade in from transparent when animating.
+        let opacity_atom = x11util::intern_atom(&conn, b"_NET_WM_WINDOW_OPACITY")?;
+        let initial_opacity = if animation_ms == 0 { opacity } else { 0.0 };
+        x11util::set_opacity(&conn, opacity_atom, window, initial_opacity)?;
 
         // Raise above everything
-        let raise = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
-        conn.configure_window(window, &raise)?;
+        x11util::raise(&conn, window)?;
 
-        // Apply SHAPE to cut a circle around the cursor
-        let cursor = get_cursor_position(&conn, root)?;
-        apply_spotlight_shape(
-            &conn,
-            window,
-            screen_width,
-            screen_height,
-            cursor.0,
-            cursor.1,
-            radius,
-        )?;
-
-        conn.map_window(window)?;
-        conn.flush()?;
-
-        info!(
-            "Find My Mouse: spotlight overlay created at ({}, {})",
-            cursor.0, cursor.1
-        );
-
-        Ok(Self {
+        let mut overlay = Self {
             conn,
             window,
             root,
             screen_width,
             screen_height,
             radius,
-            _bg_color: bg_color,
-            _spotlight_color: spotlight_color,
-            _opacity: config.find_my_mouse_overlay_opacity,
-        })
+            initial_zoom: config.find_my_mouse_initial_zoom,
+            animation_ms,
+            opacity,
+            opacity_atom,
+            started: Instant::now(),
+            last_drawn: None,
+            animating: true,
+        };
+        overlay.update_cursor()?;
+        overlay.conn.map_window(window)?;
+        overlay.conn.flush()?;
+
+        info!(
+            "Find My Mouse: spotlight shown (zoom={}x, animation={}ms)",
+            overlay.initial_zoom, animation_ms
+        );
+        Ok(overlay)
     }
 
     fn update_cursor(&mut self) -> Result<()> {
         let (cx, cy) = get_cursor_position(&self.conn, self.root)?;
-        apply_spotlight_shape(
-            &self.conn,
-            self.window,
-            self.screen_width,
-            self.screen_height,
-            cx,
-            cy,
-            self.radius,
-        )?;
+        let progress =
+            spotlight_progress(self.started.elapsed().as_millis() as u64, self.animation_ms);
+        let r = spotlight_radius(self.radius, self.initial_zoom, progress);
+        if self.animating {
+            x11util::set_opacity(
+                &self.conn,
+                self.opacity_atom,
+                self.window,
+                self.opacity * progress,
+            )?;
+            self.animating = progress < 1.0;
+        }
+        if self.last_drawn != Some((cx, cy, r)) {
+            apply_spotlight_shape(
+                &self.conn,
+                self.window,
+                self.screen_width,
+                self.screen_height,
+                cx,
+                cy,
+                r,
+            )?;
+            self.last_drawn = Some((cx, cy, r));
+        }
         self.conn.flush()?;
         Ok(())
     }
@@ -278,64 +438,7 @@ fn apply_spotlight_shape(
     cy: i16,
     radius: u32,
 ) -> Result<()> {
-    use x11rb::protocol::shape;
-
-    let r = radius as i16;
-
-    // Create a pixmap for the shape mask (1-bit depth)
-    let pixmap = conn.generate_id()?;
-    conn.create_pixmap(1, pixmap, window, sw, sh)?;
-
-    // Create a GC for drawing on the pixmap
-    let gc_white = conn.generate_id()?;
-    conn.create_gc(gc_white, pixmap, &xproto::CreateGCAux::new().foreground(1))?;
-    let gc_black = conn.generate_id()?;
-    conn.create_gc(gc_black, pixmap, &xproto::CreateGCAux::new().foreground(0))?;
-
-    // Fill entire pixmap with white (opaque = window is visible)
-    conn.poly_fill_rectangle(
-        pixmap,
-        gc_white,
-        &[xproto::Rectangle {
-            x: 0,
-            y: 0,
-            width: sw,
-            height: sh,
-        }],
-    )?;
-
-    // Draw black circle at cursor position (transparent = hole in the window)
-    // We use poly_fill_arc to draw a filled circle
-    conn.poly_fill_arc(
-        pixmap,
-        gc_black,
-        &[xproto::Arc {
-            x: cx - r,
-            y: cy - r,
-            width: (r * 2) as u16,
-            height: (r * 2) as u16,
-            angle1: 0,
-            angle2: 360 * 64, // X11 uses 1/64th degree units
-        }],
-    )?;
-
-    // Apply shape mask to the window
-    shape::mask(
-        conn,
-        shape::SO::SET,
-        shape::SK::BOUNDING,
-        window,
-        0,
-        0,
-        pixmap,
-    )?;
-
-    // Cleanup
-    conn.free_gc(gc_white)?;
-    conn.free_gc(gc_black)?;
-    conn.free_pixmap(pixmap)?;
-
-    Ok(())
+    x11util::shape_circle(conn, window, sw, sh, cx, cy, radius, true)
 }
 
 fn get_cursor_position(conn: &RustConnection, root: u32) -> Result<(i16, i16)> {
@@ -379,4 +482,64 @@ fn build_keymap(conn: &RustConnection) -> Result<std::collections::HashMap<u8, u
     }
 
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shake_back_and_forth_detected() {
+        let mut d = ShakeDetector::new(1000, 1000, 400);
+        let mut t = 0;
+        let mut detected = false;
+        for i in 0..12 {
+            let dx = if i % 2 == 0 { 200 } else { -200 };
+            // a few samples per stroke, same direction -> merged
+            for _ in 0..4 {
+                t += 10;
+                detected |= d.push(dx / 4, 0, t);
+            }
+        }
+        assert!(detected);
+    }
+
+    #[test]
+    fn straight_line_is_not_a_shake() {
+        let mut d = ShakeDetector::new(1000, 1000, 400);
+        let mut detected = false;
+        for i in 0..100 {
+            detected |= d.push(30, if i % 2 == 0 { 1 } else { 0 }, i * 5);
+        }
+        assert!(!detected);
+    }
+
+    #[test]
+    fn short_or_slow_shake_ignored() {
+        // Too little distance.
+        let mut d = ShakeDetector::new(1000, 1000, 400);
+        let mut detected = false;
+        for i in 0..6u64 {
+            detected |= d.push(if i % 2 == 0 { 50 } else { -50 }, 0, i * 20);
+        }
+        assert!(!detected);
+
+        // Enough distance, but spread over far more than the interval.
+        let mut d = ShakeDetector::new(1000, 1000, 400);
+        for i in 0..12u64 {
+            detected |= d.push(if i % 2 == 0 { 200 } else { -200 }, 0, i * 600);
+        }
+        assert!(!detected);
+    }
+
+    #[test]
+    fn spotlight_animation_math() {
+        assert_eq!(spotlight_progress(0, 0), 1.0);
+        assert_eq!(spotlight_progress(0, 500), 0.0);
+        assert_eq!(spotlight_progress(500, 500), 1.0);
+        assert_eq!(spotlight_progress(10_000, 500), 1.0);
+        assert_eq!(spotlight_radius(100, 4, 0.0), 400);
+        assert_eq!(spotlight_radius(100, 4, 1.0), 100);
+        assert_eq!(spotlight_radius(100, 0, 0.0), 100);
+    }
 }

@@ -70,7 +70,17 @@ fn run_launch_mode(args: &[String]) {
     let mut config: mpt_workspaces::config::WorkspacesConfig =
         mpt_common::config::load_module_config("workspaces").unwrap_or_default();
 
-    let ws = config.workspaces.iter_mut().find(|ws| ws.name == *name);
+    // Accept a name, or an index (older desktop shortcuts use `--launch <idx>`).
+    let pos = config
+        .workspaces
+        .iter()
+        .position(|ws| ws.name == *name)
+        .or_else(|| {
+            name.parse::<usize>()
+                .ok()
+                .filter(|&i| i < config.workspaces.len())
+        });
+    let ws = pos.and_then(|i| config.workspaces.get_mut(i));
 
     let Some(ws) = ws else {
         error!("Workspace \"{name}\" not found");

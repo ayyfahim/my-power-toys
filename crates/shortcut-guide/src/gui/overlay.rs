@@ -1,11 +1,22 @@
 use egui::{self, RichText, Shadow};
 
-use crate::config::ShortcutGuideConfig;
-use crate::gui::theme;
+use crate::config::{ShortcutGuideConfig, WindowPosition};
+use crate::gui::theme::{self, Palette};
 use crate::shortcuts::{ShortcutEntry, group_by_category};
+use crate::x11::KeyState;
+
+/// Options for one overlay run.
+pub struct GuideOptions {
+    /// Close as soon as Super is no longer held (opened by press-and-hold
+    /// with `close_on_windows_key_release`).
+    pub close_on_super_release: bool,
+}
 
 struct GuideApp {
     shortcuts: Vec<ShortcutEntry>,
+    palette: Palette,
+    position: WindowPosition,
+    super_watch: Option<KeyState>,
     should_close: bool,
     frame_count: u32,
     had_focus: bool,
@@ -13,9 +24,23 @@ struct GuideApp {
 }
 
 impl GuideApp {
-    fn new(config: ShortcutGuideConfig) -> Self {
+    fn new(config: ShortcutGuideConfig, palette: Palette, options: GuideOptions) -> Self {
+        let super_watch = if options.close_on_super_release {
+            match KeyState::connect() {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::warn!("Cannot watch Super release: {e:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Self {
             shortcuts: config.resolve(),
+            palette,
+            position: config.window_position,
+            super_watch,
             should_close: false,
             frame_count: 0,
             had_focus: false,
@@ -24,8 +49,9 @@ impl GuideApp {
     }
 
     fn draw_header(&self, ui: &mut egui::Ui) {
+        let p = &self.palette;
         let frame = egui::Frame::NONE
-            .fill(theme::BG_HEADER)
+            .fill(p.bg_header)
             .inner_margin(egui::Margin::symmetric(theme::INNER_PADDING as i8, 14));
 
         frame.show(ui, |ui| {
@@ -33,13 +59,13 @@ impl GuideApp {
                 ui.label(
                     RichText::new("Keyboard Shortcuts")
                         .size(theme::FONT_TITLE)
-                        .color(theme::TEXT_PRIMARY)
+                        .color(p.text_primary)
                         .strong(),
                 );
                 ui.label(
                     RichText::new(format!("{} shortcuts available", self.shortcuts.len()))
                         .size(theme::FONT_SUBTITLE)
-                        .color(theme::TEXT_MUTED),
+                        .color(p.text_muted),
                 );
             });
         });
@@ -66,7 +92,7 @@ impl GuideApp {
             ui.columns(2, |cols| {
                 for (i, col_ui) in cols.iter_mut().enumerate() {
                     for (cat, entries) in &columns[i] {
-                        draw_category(col_ui, cat, entries);
+                        draw_category(col_ui, &self.palette, cat, entries);
                         col_ui.add_space(theme::CATEGORY_SPACING);
                     }
                 }
@@ -75,24 +101,25 @@ impl GuideApp {
     }
 
     fn draw_footer(&self, ui: &mut egui::Ui) {
+        let p = &self.palette;
         let frame = egui::Frame::NONE
-            .fill(theme::BG_HEADER)
+            .fill(p.bg_header)
             .inner_margin(egui::Margin::symmetric(theme::INNER_PADDING as i8, 10));
 
         frame.show(ui, |ui| {
             ui.horizontal(|ui| {
-                draw_key_badge(ui, "Esc");
+                draw_key_badge(ui, p, "Esc");
                 ui.label(
                     RichText::new("close")
                         .size(theme::FONT_HINT)
-                        .color(theme::TEXT_MUTED),
+                        .color(p.text_muted),
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new("MyPowerToys • Shortcut Guide")
                             .size(theme::FONT_HINT)
-                            .color(theme::TEXT_MUTED),
+                            .color(p.text_muted),
                     );
                 });
             });
@@ -100,11 +127,11 @@ impl GuideApp {
     }
 }
 
-fn draw_category(ui: &mut egui::Ui, category: &str, entries: &[&ShortcutEntry]) {
+fn draw_category(ui: &mut egui::Ui, p: &Palette, category: &str, entries: &[&ShortcutEntry]) {
     ui.label(
         RichText::new(category.to_uppercase())
             .size(theme::FONT_CATEGORY)
-            .color(theme::ACCENT)
+            .color(p.accent)
             .strong(),
     );
     ui.add_space(4.0);
@@ -118,7 +145,7 @@ fn draw_category(ui: &mut egui::Ui, category: &str, entries: &[&ShortcutEntry]) 
             egui::vec2(sep_width, 1.0),
         ),
         0.0,
-        theme::SEPARATOR,
+        p.separator,
     );
     ui.add_space(6.0);
 
@@ -140,7 +167,7 @@ fn draw_category(ui: &mut egui::Ui, category: &str, entries: &[&ShortcutEntry]) 
                         egui::Label::new(
                             RichText::new(&entry.description)
                                 .size(theme::FONT_DESC)
-                                .color(theme::TEXT_SECONDARY),
+                                .color(p.text_secondary),
                         )
                         .truncate(),
                     );
@@ -150,13 +177,9 @@ fn draw_category(ui: &mut egui::Ui, category: &str, entries: &[&ShortcutEntry]) 
             // Key badges on the right.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 for (i, part) in parts.iter().enumerate().rev() {
-                    draw_key_badge(ui, part.trim());
+                    draw_key_badge(ui, p, part.trim());
                     if i > 0 {
-                        ui.label(
-                            RichText::new("+")
-                                .size(theme::FONT_KEY)
-                                .color(theme::TEXT_MUTED),
-                        );
+                        ui.label(RichText::new("+").size(theme::FONT_KEY).color(p.text_muted));
                     }
                 }
             });
@@ -192,10 +215,10 @@ fn estimate_keys_width(ui: &egui::Ui, parts: &[&str]) -> f32 {
     total
 }
 
-fn draw_key_badge(ui: &mut egui::Ui, key: &str) {
+fn draw_key_badge(ui: &mut egui::Ui, p: &Palette, key: &str) {
     let frame = egui::Frame::NONE
-        .fill(theme::KEY_BG)
-        .stroke(egui::Stroke::new(1.0, theme::KEY_BORDER))
+        .fill(p.key_bg)
+        .stroke(egui::Stroke::new(1.0, p.key_border))
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(6, 2));
 
@@ -203,7 +226,7 @@ fn draw_key_badge(ui: &mut egui::Ui, key: &str) {
         ui.label(
             RichText::new(key)
                 .size(theme::FONT_KEY)
-                .color(theme::KEY_TEXT)
+                .color(p.key_text)
                 .monospace(),
         );
     });
@@ -224,6 +247,18 @@ impl eframe::App for GuideApp {
             }
         });
 
+        // Opened by holding Super: close once it is released.
+        if let Some(watch) = &self.super_watch {
+            match watch.snapshot() {
+                Ok(snap) if !snap.super_down => self.should_close = true,
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!("Super release watch failed: {e:#}");
+                    self.super_watch = None;
+                }
+            }
+        }
+
         // Close on focus loss (once we've had focus at least one frame)
         let has_focus = ctx.input(|i| i.focused);
         if has_focus {
@@ -237,9 +272,9 @@ impl eframe::App for GuideApp {
         let content_response = egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::BG_PRIMARY)
+                    .fill(self.palette.bg_primary)
                     .corner_radius(theme::CORNER_RADIUS)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+                    .stroke(egui::Stroke::new(1.0, self.palette.border)),
             )
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
@@ -264,9 +299,8 @@ impl eframe::App for GuideApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
 
                 if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
-                    let x = (monitor.x - target.x) / 2.0;
-                    let y = (monitor.y - target.y) / 2.0;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition([x, y].into()));
+                    let pos = overlay_origin(self.position, monitor, target);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
                 }
             }
         }
@@ -279,7 +313,22 @@ impl eframe::App for GuideApp {
     }
 }
 
-pub fn run_guide(config: ShortcutGuideConfig) {
+/// Top-left corner of the overlay for the configured placement.
+pub fn overlay_origin(
+    position: WindowPosition,
+    monitor: egui::Vec2,
+    size: egui::Vec2,
+) -> egui::Pos2 {
+    let y = ((monitor.y - size.y) / 2.0).max(0.0);
+    let x = match position {
+        WindowPosition::Center => (monitor.x - size.x) / 2.0,
+        WindowPosition::Left => theme::EDGE_MARGIN,
+        WindowPosition::Right => monitor.x - size.x - theme::EDGE_MARGIN,
+    };
+    egui::pos2(x.max(0.0), y)
+}
+
+pub fn run_guide(config: ShortcutGuideConfig, options: GuideOptions) {
     if config.resolve().is_empty() {
         tracing::warn!("Shortcut Guide: no shortcuts to display, exiting");
         return;
@@ -300,20 +349,48 @@ pub fn run_guide(config: ShortcutGuideConfig) {
         "Shortcut Guide",
         native_options,
         Box::new(move |cc| {
-            setup_visuals(&cc.egui_ctx);
-            Ok(Box::new(GuideApp::new(config)))
+            let palette = Palette::for_theme(config.theme);
+            setup_visuals(&cc.egui_ctx, &palette);
+            Ok(Box::new(GuideApp::new(config, palette, options)))
         }),
     );
 }
 
-fn setup_visuals(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
+fn setup_visuals(ctx: &egui::Context, p: &Palette) {
+    let mut visuals = if p.dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
     visuals.window_fill = egui::Color32::TRANSPARENT;
     visuals.panel_fill = egui::Color32::TRANSPARENT;
     visuals.window_shadow = Shadow::NONE;
     visuals.window_stroke = egui::Stroke::NONE;
     visuals.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
-    visuals.widgets.inactive.bg_fill = theme::BG_CARD;
-    visuals.widgets.hovered.bg_fill = theme::BG_CARD;
+    visuals.widgets.inactive.bg_fill = p.bg_card;
+    visuals.widgets.hovered.bg_fill = p.bg_card;
     ctx.set_visuals(visuals);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_positions() {
+        let monitor = egui::vec2(1920.0, 1080.0);
+        let size = egui::vec2(780.0, 600.0);
+        assert_eq!(
+            overlay_origin(WindowPosition::Center, monitor, size),
+            egui::pos2(570.0, 240.0)
+        );
+        assert_eq!(
+            overlay_origin(WindowPosition::Left, monitor, size).x,
+            theme::EDGE_MARGIN
+        );
+        assert_eq!(
+            overlay_origin(WindowPosition::Right, monitor, size).x,
+            1920.0 - 780.0 - theme::EDGE_MARGIN
+        );
+    }
 }

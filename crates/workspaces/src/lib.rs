@@ -52,10 +52,27 @@ impl PowerModule for Workspaces {
     }
 
     fn default_hotkey(&self) -> Option<Hotkey> {
-        Some(Hotkey::new(vec![Modifier::Super, Modifier::Ctrl], "W"))
+        let fallback = || Hotkey::new(vec![Modifier::Super, Modifier::Ctrl], "W");
+        let configured = self.config.hotkey.trim();
+        if configured.is_empty() {
+            return Some(fallback());
+        }
+        match Hotkey::parse(configured) {
+            Ok(hk) => Some(hk),
+            Err(e) => {
+                warn!(
+                    "Invalid workspaces hotkey '{configured}': {e}; using {}",
+                    config::DEFAULT_HOTKEY
+                );
+                Some(fallback())
+            }
+        }
     }
 
     fn start(&mut self) -> Result<()> {
+        if let Ok(cfg) = mpt_common::config::load_module_config("workspaces") {
+            self.config = cfg;
+        }
         self.running = true;
         info!(
             "Workspaces started with {} workspace(s)",
@@ -106,4 +123,22 @@ fn find_gui_binary() -> std::path::PathBuf {
     }
     // Fallback: rely on PATH
     "mpt-workspaces".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hotkey_from_config() {
+        let mut m = Workspaces {
+            running: false,
+            config: config::WorkspacesConfig::default(),
+        };
+        assert_eq!(m.default_hotkey().unwrap().to_string(), "Super+Ctrl+W");
+        m.config.hotkey = "Super+Alt+W".into();
+        assert_eq!(m.default_hotkey().unwrap().to_string(), "Super+Alt+W");
+        m.config.hotkey = "Bogus+W".into();
+        assert_eq!(m.default_hotkey().unwrap().to_string(), "Super+Ctrl+W");
+    }
 }

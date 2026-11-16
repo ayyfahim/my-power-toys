@@ -16,6 +16,35 @@ pub struct PeekConfig {
 
     #[serde(default = "default_max_dir_entries")]
     pub max_dir_entries: usize,
+
+    /// Upstream `AlwaysOnTop`. Defaults to true to keep the previous behaviour.
+    #[serde(default = "default_true")]
+    pub always_on_top: bool,
+
+    /// Upstream `CloseAfterLosingFocus`. Defaults to true (previous behaviour).
+    #[serde(default = "default_true")]
+    pub close_after_losing_focus: bool,
+
+    /// Upstream `ConfirmFileDelete`: ask before Delete moves a file to trash.
+    #[serde(default = "default_true")]
+    pub confirm_file_delete: bool,
+
+    /// Upstream `EnableSpaceToActivate`. On Linux there is no file-manager
+    /// hook, so Space toggles (closes) the open preview window.
+    #[serde(default = "default_true")]
+    pub enable_space_to_activate: bool,
+
+    /// Syntax-highlight source code previews.
+    #[serde(default = "default_true")]
+    pub syntax_highlighting: bool,
+
+    /// Render Markdown files instead of showing the raw source.
+    #[serde(default = "default_true")]
+    pub render_markdown: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_max_preview_lines() -> usize {
@@ -31,6 +60,12 @@ impl Default for PeekConfig {
         Self {
             max_preview_lines: default_max_preview_lines(),
             max_dir_entries: default_max_dir_entries(),
+            always_on_top: true,
+            close_after_losing_focus: true,
+            confirm_file_delete: true,
+            enable_space_to_activate: true,
+            syntax_highlighting: true,
+            render_markdown: true,
         }
     }
 }
@@ -146,5 +181,9 @@ mod tests {
         let parsed: PeekConfig = toml::from_str("").unwrap();
         assert_eq!(parsed.max_preview_lines, 50);
         assert_eq!(parsed.max_dir_entries, 20);
+        assert!(parsed.always_on_top);
+        assert!(parsed.close_after_losing_focus);
+        assert!(parsed.confirm_file_delete);
+        assert!(parsed.enable_space_to_activate);
     }
 }

@@ -38,8 +38,8 @@ pub use mpt_common::theme::{
 };
 
 // ── Module-specific dimensions ─────────────────────────────────────────────
-pub const WINDOW_WIDTH: f32 = 500.0;
-pub const WINDOW_HEIGHT: f32 = 620.0;
+pub const WINDOW_WIDTH: f32 = 560.0;
+pub const WINDOW_HEIGHT: f32 = 720.0;
 pub const FILE_CARD_HEIGHT: f32 = 36.0;
 pub const DROP_ZONE_HEIGHT: f32 = 120.0;
 pub const FONT_FILE: f32 = 12.0;

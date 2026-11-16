@@ -22,7 +22,7 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
-x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "shape"] }
 egui = { workspace = true, optional = true }
 eframe = { workspace = true, optional = true }
 scopeguard = { version = "1", optional = true }

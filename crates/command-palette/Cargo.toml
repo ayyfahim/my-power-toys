@@ -16,7 +16,7 @@ gui = ["dep:egui", "dep:eframe", "dep:scopeguard", "dep:image", "dep:resvg", "mp
 
 [dependencies]
 mpt-common = { path = "../common" }
-mpt-app-launcher = { path = "../app-launcher" }
+mpt-app-launcher = { path = "../app-launcher", default-features = false }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -24,6 +24,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
+chrono = "0.4"
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
 egui = { workspace = true, optional = true }
 eframe = { workspace = true, optional = true }
 scopeguard = { version = "1", optional = true }

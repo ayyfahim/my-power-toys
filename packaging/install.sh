@@ -58,7 +58,16 @@ tar xzf "$TMPDIR/release.tar.gz" -C "$TMPDIR"
 # Install binaries
 echo "==> Installing binaries to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-for bin in mpt-daemon mpt-ctl mpt-settings mpt-color-picker mpt-command-palette mpt-peek mpt-image-resizer mpt-bulk-rename mpt-hosts-editor mpt-fancy-zones mpt-quick-accent mpt-shortcut-guide mpt-workspaces; do
+BINARIES=(
+    mpt-daemon mpt-ctl mpt-settings
+    mpt-app-launcher mpt-bulk-rename mpt-color-picker mpt-command-not-found
+    mpt-command-palette mpt-crop-and-lock mpt-environment-variables
+    mpt-fancy-zones mpt-file-locksmith mpt-hosts-editor mpt-image-resizer
+    mpt-new-plus mpt-paste-plain mpt-peek mpt-power-display mpt-quick-accent
+    mpt-screen-ruler mpt-shortcut-guide mpt-text-extractor mpt-workspaces
+    mpt-zoom-it
+)
+for bin in "${BINARIES[@]}"; do
     if [ -f "$TMPDIR/$bin" ]; then
         install -m 755 "$TMPDIR/$bin" "$INSTALL_DIR/$bin"
         echo "    Installed $bin"
@@ -78,6 +87,12 @@ if [ -d "$TMPDIR/assets" ]; then
 else
     echo "    WARNING: No assets directory found in archive."
     echo "    The UI may not display images correctly."
+fi
+
+# Key Manager udev rule (needs root, so it is only copied and explained here)
+if [ -f "$TMPDIR/99-mpt-uinput.rules" ]; then
+    mkdir -p "$ASSETS_DIR"
+    cp -f "$TMPDIR/99-mpt-uinput.rules" "$ASSETS_DIR/"
 fi
 
 # Check PATH
@@ -198,4 +213,12 @@ echo "  The daemon is running in the background."
 echo "  Open settings:      mpt-settings (or find 'MyPowerToys' in your app menu)"
 echo "  CLI control:        mpt-ctl list"
 echo "  Daemon status:      systemctl --user status my-power-toys"
+echo ""
+echo "  Key Manager needs access to /dev/input and /dev/uinput:"
+echo "    sudo cp $ASSETS_DIR/99-mpt-uinput.rules /etc/udev/rules.d/"
+echo "    sudo usermod -aG input \"\$USER\""
+echo "    sudo udevadm control --reload-rules && sudo udevadm trigger"
+echo "  Power Display (external monitors) needs ddcutil and the i2c group:"
+echo "    sudo usermod -aG i2c \"\$USER\""
+echo "  Log out and back in after changing groups."
 echo ""

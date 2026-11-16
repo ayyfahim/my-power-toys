@@ -1,8 +1,10 @@
 use mpt_color_picker::color::Color;
+use mpt_color_picker::gui::editor::{EditorExit, EditorOptions, run_editor_with, spawn_picker};
+use mpt_color_picker::gui::overlay::{OverlayOptions, run_overlay_with};
 use mpt_color_picker::history::ColorHistory;
 use mpt_color_picker::picker::copy_to_clipboard;
 use mpt_color_picker::screenshot::capture_fullscreen;
-use mpt_color_picker::{ActivationBehavior, ColorPickerConfig};
+use mpt_color_picker::{ActivationBehavior, ClickAction, ColorPickerConfig};
 use std::fs;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
@@ -15,8 +17,20 @@ fn main() {
         )
         .init();
 
+    // `--pick` forces pick mode (used when the editor's "Pick color" relaunches us).
+    let force_pick = std::env::args().any(|a| a == "--pick");
+
     // Prevent multiple instances
     let lock_path = lock_file_path();
+    if force_pick {
+        // The editor that relaunched us may still be shutting down.
+        for _ in 0..40 {
+            if !lock_held_by_live_process(&lock_path) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
     if lock_path.exists() {
         // Check if the process is still alive
         if let Ok(pid_str) = fs::read_to_string(&lock_path)
@@ -47,7 +61,17 @@ fn main() {
 
     info!("Color Picker GUI starting (behavior={:?})", config.behavior);
 
-    match config.behavior {
+    let editor_options = EditorOptions {
+        formats: config.enabled_formats(),
+        show_color_name: config.show_color_name,
+    };
+    let behavior = if force_pick {
+        ActivationBehavior::PickAndEdit
+    } else {
+        config.behavior
+    };
+
+    let exit = match behavior {
         ActivationBehavior::EditorOnly => {
             let history = ColorHistory::load();
             let color = history
@@ -55,7 +79,7 @@ fn main() {
                 .first()
                 .map(|e| e.color)
                 .unwrap_or(Color::new(128, 128, 128));
-            mpt_color_picker::gui::editor::run_editor(color, history);
+            run_editor_with(color, history, editor_options)
         }
         ActivationBehavior::PickAndClose | ActivationBehavior::PickAndEdit => {
             // Capture screenshot
@@ -68,11 +92,24 @@ fn main() {
             };
 
             // Show overlay, get picked color
-            let picked = mpt_color_picker::gui::overlay::run_overlay(screenshot);
+            let overlay_options = OverlayOptions {
+                tooltip_format: config.format,
+                show_color_name: config.show_color_name,
+                change_cursor: config.change_cursor,
+                // In forced pick mode (from the editor) a left click returns to the editor.
+                primary_click: if force_pick {
+                    ClickAction::PickColorThenEditor
+                } else {
+                    config.primary_click()
+                },
+                middle_click: config.middle_click_action,
+                secondary_click: config.secondary_click_action,
+            };
+            let picked = run_overlay_with(screenshot, overlay_options);
 
             match picked {
-                Some(color) => {
-                    info!("Picked color: {color}");
+                Some((color, action)) => {
+                    info!("Picked color: {color} ({action:?})");
 
                     // Copy to clipboard
                     let formatted = color.format(config.format);
@@ -84,22 +121,38 @@ fn main() {
 
                     // Save to history
                     let mut history = ColorHistory::load();
-                    history.push(color);
+                    history.push_with_limit(color, config.history_limit());
                     if let Err(e) = history.save() {
                         warn!("Failed to save history: {e}");
                     }
 
-                    // Open editor if configured
-                    if config.behavior == ActivationBehavior::PickAndEdit {
-                        mpt_color_picker::gui::editor::run_editor(color, history);
+                    // Open editor if the click action asks for it
+                    if action == ClickAction::PickColorThenEditor {
+                        run_editor_with(color, history, editor_options)
+                    } else {
+                        EditorExit::Closed
                     }
                 }
                 None => {
                     info!("Color picking cancelled");
+                    EditorExit::Closed
                 }
             }
         }
+    };
+
+    if exit == EditorExit::PickAgain {
+        // Release the lock before relaunching so the new instance can start.
+        drop(_guard);
+        spawn_picker();
     }
+}
+
+fn lock_held_by_live_process(lock_path: &std::path::Path) -> bool {
+    fs::read_to_string(lock_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .is_some_and(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists())
 }
 
 fn lock_file_path() -> PathBuf {

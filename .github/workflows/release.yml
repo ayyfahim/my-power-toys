@@ -38,27 +38,19 @@ jobs:
         run: sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.VERSION }}"/' Cargo.toml
 
       - name: Build release binaries
-        run: cargo build --release
+        run: cargo build --release --workspace
 
       - name: Package release archive
         run: |
           mkdir -p dist
-          cp target/release/mpt-daemon dist/
-          cp target/release/mpt-ctl dist/
-          cp target/release/mpt-settings dist/
-          cp target/release/mpt-color-picker dist/
-          cp target/release/mpt-command-palette dist/
-          cp target/release/mpt-peek dist/
-          cp target/release/mpt-image-resizer dist/
-          cp target/release/mpt-bulk-rename dist/
-          cp target/release/mpt-hosts-editor dist/
-          cp target/release/mpt-fancy-zones dist/
-          cp target/release/mpt-quick-accent dist/
-          cp target/release/mpt-shortcut-guide dist/
-          cp target/release/mpt-workspaces dist/
+          BINARIES="mpt-daemon mpt-ctl mpt-settings mpt-app-launcher mpt-bulk-rename mpt-color-picker mpt-command-not-found mpt-command-palette mpt-crop-and-lock mpt-environment-variables mpt-fancy-zones mpt-file-locksmith mpt-hosts-editor mpt-image-resizer mpt-new-plus mpt-paste-plain mpt-peek mpt-power-display mpt-quick-accent mpt-screen-ruler mpt-shortcut-guide mpt-text-extractor mpt-workspaces mpt-zoom-it"
+          for bin in $BINARIES; do
+            cp "target/release/$bin" dist/
+          done
+          cp crates/key-manager/assets/99-mpt-uinput.rules dist/
           cp -r assets dist/assets
           rm -f dist/assets/*.desktop dist/assets/*.service dist/assets/main-screen-app.png
-          tar czf "my-power-toys-${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz" -C dist mpt-daemon mpt-ctl mpt-settings mpt-color-picker mpt-command-palette mpt-peek mpt-image-resizer mpt-bulk-rename mpt-hosts-editor mpt-fancy-zones mpt-quick-accent mpt-shortcut-guide mpt-workspaces assets
+          tar czf "my-power-toys-${{ steps.version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz" -C dist $BINARIES 99-mpt-uinput.rules assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

@@ -1766,7 +1766,18 @@ impl Settings {
     }
 
     fn has_dependency_help(&self, module_id: &str) -> bool {
-        matches!(module_id, "text-extractor" | "color-picker" | "paste-plain")
+        matches!(
+            module_id,
+            "text-extractor"
+                | "color-picker"
+                | "paste-plain"
+                | "power-display"
+                | "file-locksmith"
+                | "environment-variables"
+                | "zoom-it"
+                | "crop-and-lock"
+                | "screen-ruler"
+        )
     }
 
     fn dependency_packages(&self, module_id: &str) -> Option<Vec<&'static str>> {
@@ -1799,6 +1810,13 @@ impl Settings {
                 "scrot",
             ],
             "paste-plain" => vec!["wl-clipboard", "xclip", "xdotool"],
+            "power-display" => vec!["ddcutil", "brightnessctl"],
+            "file-locksmith" | "environment-variables" => match self.package_manager {
+                PackageManager::Apt => vec!["pkexec"],
+                _ => vec!["polkit"],
+            },
+            "zoom-it" => vec!["ffmpeg", "wf-recorder", "wl-clipboard", "xclip"],
+            "crop-and-lock" | "screen-ruler" => vec!["wl-clipboard", "xclip"],
             _ => return None,
         };
         Some(packages)
@@ -1818,6 +1836,24 @@ impl Settings {
             "paste-plain" => vec![
                 "Le module utilise wl-clipboard/xclip pour le presse-papiers.".to_string(),
                 "Le collage est simulé via xdotool (Ctrl+V).".to_string(),
+            ],
+            "power-display" => vec![
+                "ddcutil règle les écrans externes (DDC/CI) : ajoutez votre utilisateur au groupe i2c (sudo usermod -aG i2c $USER) et chargez le module i2c-dev.".to_string(),
+                "brightnessctl règle le rétroéclairage des portables ; xrandr sert de repli logiciel sous X11.".to_string(),
+            ],
+            "file-locksmith" => vec![
+                "pkexec (polkit) permet de terminer les processus d'autres utilisateurs.".to_string(),
+                "L'entrée du menu contextuel est retirée quand le module ou le démon s'arrête.".to_string(),
+            ],
+            "environment-variables" => vec![
+                "pkexec (polkit) sert à écrire les variables système dans /etc/environment.d.".to_string(),
+            ],
+            "zoom-it" => vec![
+                "L'enregistrement utilise ffmpeg (X11) ou wf-recorder (Wayland wlroots).".to_string(),
+                "Les captures sont copiées via xclip ou wl-clipboard.".to_string(),
+            ],
+            "crop-and-lock" | "screen-ruler" => vec![
+                "Le presse-papiers utilise xclip (X11) ou wl-clipboard (Wayland).".to_string(),
             ],
             _ => vec![],
         };
@@ -2531,6 +2567,9 @@ impl Settings {
         tr: &'a translations::Tr,
         ui: Ui,
     ) -> Element<'a, Message> {
+        if let Some(page) = self.settings_extra(id, tr, ui) {
+            return card(page, ui);
+        }
         let content = match id {
             "awake" => self.settings_awake(tr, ui),
             "always-on-top" => self.settings_always_on_top(tr, ui),
@@ -2804,16 +2843,12 @@ impl Settings {
     }
 
     fn settings_color_picker<'a>(&self, tr: &'a translations::Tr, ui: Ui) -> Element<'a, Message> {
+        use mpt_color_picker::{ActivationBehavior, Color as PickColor, ColorFormat};
+
         let cfg = &self.module_configs.color_picker;
 
         // Example color for format previews (moccasin / ffe4b5)
-        let examples: &[(&str, &str)] = &[
-            ("hex", "#FFE4B5"),
-            ("rgb", "rgb(255, 228, 181)"),
-            ("hsl", "hsl(38, 100%, 85%)"),
-            ("hsv", "hsv(38, 29%, 100%)"),
-            ("cmyk", "cmyk(0%, 11%, 29%, 0%)"),
-        ];
+        let example_color = PickColor::new(255, 228, 181);
 
         // Build format rows
         let mut format_rows = column![
@@ -2828,19 +2863,13 @@ impl Settings {
         ]
         .spacing(8);
 
-        for entry in &cfg.formats {
-            let example = examples
-                .iter()
-                .find(|(id, _)| *id == entry.id)
-                .map(|(_, ex)| *ex)
-                .unwrap_or("");
-            let id = entry.id.clone();
-            let enabled = entry.enabled;
+        for (fmt, enabled) in cfg.format_list() {
+            let id = fmt.id().to_string();
             let fmt_row: Element<'a, Message> = container(
                 row![
                     column![
-                        text(entry.label.clone()).size(ui.sz(14.0)).font(ui.font()),
-                        text(example.to_string())
+                        text(fmt.label()).size(ui.sz(14.0)).font(ui.font()),
+                        text(example_color.format(fmt))
                             .size(ui.sz(12.0))
                             .font(ui.font())
                             .color(theme::subtext0(ui.dark)),
@@ -2858,6 +2887,22 @@ impl Settings {
             .style(theme::card(ui.contrast, ui.glass))
             .into();
             format_rows = format_rows.push(fmt_row);
+        }
+
+        // Default (copied) format: all upstream formats, wrapped in rows of 6.
+        let mut default_format_rows = column![].spacing(4);
+        for chunk in ColorFormat::ALL.chunks(6) {
+            let mut r = row![].spacing(2);
+            for &f in chunk {
+                r = r.push(seg_button(
+                    f.label(),
+                    cfg.format == f,
+                    Message::SetColorPickerFormat(f),
+                    ui,
+                ));
+            }
+            default_format_rows =
+                default_format_rows.push(container(r).style(theme::segmented_control));
         }
 
         column![
@@ -2878,20 +2923,20 @@ impl Settings {
                 row![
                     seg_button(
                         tr.ms_cp_open_editor,
-                        cfg.behavior == "editor-only",
-                        Message::SetColorPickerBehavior("editor-only".into()),
+                        cfg.behavior == ActivationBehavior::EditorOnly,
+                        Message::SetColorPickerBehavior(ActivationBehavior::EditorOnly),
                         ui
                     ),
                     seg_button(
                         tr.ms_cp_pick_first,
-                        cfg.behavior == "pick-and-close",
-                        Message::SetColorPickerBehavior("pick-and-close".into()),
+                        cfg.behavior == ActivationBehavior::PickAndClose,
+                        Message::SetColorPickerBehavior(ActivationBehavior::PickAndClose),
                         ui
                     ),
                     seg_button(
                         tr.ms_cp_pick_and_edit,
-                        cfg.behavior == "pick-and-edit",
-                        Message::SetColorPickerBehavior("pick-and-edit".into()),
+                        cfg.behavior == ActivationBehavior::PickAndEdit,
+                        Message::SetColorPickerBehavior(ActivationBehavior::PickAndEdit),
                         ui
                     ),
                 ]
@@ -2908,42 +2953,7 @@ impl Settings {
                 .size(ui.sz(12.0))
                 .font(ui.font())
                 .color(theme::subtext0(ui.dark)),
-            container(
-                row![
-                    seg_button(
-                        "HEX",
-                        cfg.format == "hex",
-                        Message::SetColorPickerFormat("hex".into()),
-                        ui
-                    ),
-                    seg_button(
-                        "RGB",
-                        cfg.format == "rgb",
-                        Message::SetColorPickerFormat("rgb".into()),
-                        ui
-                    ),
-                    seg_button(
-                        "HSL",
-                        cfg.format == "hsl",
-                        Message::SetColorPickerFormat("hsl".into()),
-                        ui
-                    ),
-                    seg_button(
-                        "HSV",
-                        cfg.format == "hsv",
-                        Message::SetColorPickerFormat("hsv".into()),
-                        ui
-                    ),
-                    seg_button(
-                        "CMYK",
-                        cfg.format == "cmyk",
-                        Message::SetColorPickerFormat("cmyk".into()),
-                        ui
-                    ),
-                ]
-                .spacing(2),
-            )
-            .style(theme::segmented_control),
+            default_format_rows,
             Space::with_height(8),
             // Show color name
             pref_toggle(
@@ -3012,6 +3022,8 @@ impl Settings {
     }
 
     fn settings_image_resizer<'a>(&self, tr: &'a translations::Tr, ui: Ui) -> Element<'a, Message> {
+        use mpt_image_resizer::{OutputFormat, ResizePreset};
+
         let cfg = &self.module_configs.image_resizer;
         column![
             text(tr.module_settings)
@@ -3027,26 +3039,26 @@ impl Settings {
                 row![
                     seg_button(
                         "Small (640)",
-                        cfg.preset == "small",
-                        Message::SetImageResizerPreset("small".into()),
+                        cfg.preset == ResizePreset::Small,
+                        Message::SetImageResizerPreset(ResizePreset::Small),
                         ui
                     ),
                     seg_button(
                         "Medium (1280)",
-                        cfg.preset == "medium",
-                        Message::SetImageResizerPreset("medium".into()),
+                        cfg.preset == ResizePreset::Medium,
+                        Message::SetImageResizerPreset(ResizePreset::Medium),
                         ui
                     ),
                     seg_button(
                         "Large (1920)",
-                        cfg.preset == "large",
-                        Message::SetImageResizerPreset("large".into()),
+                        cfg.preset == ResizePreset::Large,
+                        Message::SetImageResizerPreset(ResizePreset::Large),
                         ui
                     ),
                     seg_button(
                         "Phone (1080)",
-                        cfg.preset == "phone",
-                        Message::SetImageResizerPreset("phone".into()),
+                        cfg.preset == ResizePreset::Phone,
+                        Message::SetImageResizerPreset(ResizePreset::Phone),
                         ui
                     ),
                 ]
@@ -3062,26 +3074,26 @@ impl Settings {
                 row![
                     seg_button(
                         "Original",
-                        cfg.output_format == "original",
-                        Message::SetImageResizerFormat("original".into()),
+                        cfg.output_format == OutputFormat::Original,
+                        Message::SetImageResizerFormat(OutputFormat::Original),
                         ui
                     ),
                     seg_button(
                         "PNG",
-                        cfg.output_format == "png",
-                        Message::SetImageResizerFormat("png".into()),
+                        cfg.output_format == OutputFormat::Png,
+                        Message::SetImageResizerFormat(OutputFormat::Png),
                         ui
                     ),
                     seg_button(
                         "JPEG",
-                        cfg.output_format == "jpeg",
-                        Message::SetImageResizerFormat("jpeg".into()),
+                        cfg.output_format == OutputFormat::Jpeg,
+                        Message::SetImageResizerFormat(OutputFormat::Jpeg),
                         ui
                     ),
                     seg_button(
                         "WebP",
-                        cfg.output_format == "webp",
-                        Message::SetImageResizerFormat("webp".into()),
+                        cfg.output_format == OutputFormat::Webp,
+                        Message::SetImageResizerFormat(OutputFormat::Webp),
                         ui
                     ),
                 ]

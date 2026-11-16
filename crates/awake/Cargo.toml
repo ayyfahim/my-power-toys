@@ -13,3 +13,6 @@ zbus = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 chrono = "0.4"
+
+[dev-dependencies]
+toml = { workspace = true }

@@ -1,3 +1,4 @@
+use crate::ClickAction;
 use crate::color::{Color, ColorFormat};
 use eframe::egui;
 use image::RgbaImage;
@@ -10,22 +11,53 @@ const MAGNIFIER_RADIUS: f32 = 65.0;
 const TOOLTIP_OFFSET_X: f32 = 20.0;
 const TOOLTIP_OFFSET_Y: f32 = -45.0;
 
+/// Overlay behaviour options (from `ColorPickerConfig`).
+#[derive(Debug, Clone, Copy)]
+pub struct OverlayOptions {
+    /// Format shown in the tooltip (the one that gets copied).
+    pub tooltip_format: ColorFormat,
+    /// Show the nearest color name in the tooltip.
+    pub show_color_name: bool,
+    /// Use a crosshair cursor while picking.
+    pub change_cursor: bool,
+    pub primary_click: ClickAction,
+    pub middle_click: ClickAction,
+    pub secondary_click: ClickAction,
+}
+
+impl Default for OverlayOptions {
+    fn default() -> Self {
+        Self {
+            tooltip_format: ColorFormat::Hex,
+            show_color_name: false,
+            change_cursor: false,
+            primary_click: ClickAction::PickColorThenEditor,
+            middle_click: ClickAction::PickColorAndClose,
+            secondary_click: ClickAction::Close,
+        }
+    }
+}
+
+type OverlayResult = Arc<Mutex<Option<(Color, ClickAction)>>>;
+
 struct OverlayApp {
     screenshot: RgbaImage,
     texture: Option<egui::TextureHandle>,
     zoom_level: f32,
-    result: Arc<Mutex<Option<Color>>>,
+    result: OverlayResult,
     should_close: bool,
+    options: OverlayOptions,
 }
 
 impl OverlayApp {
-    fn new(screenshot: RgbaImage, result: Arc<Mutex<Option<Color>>>) -> Self {
+    fn new(screenshot: RgbaImage, result: OverlayResult, options: OverlayOptions) -> Self {
         Self {
             screenshot,
             texture: None,
             zoom_level: DEFAULT_ZOOM,
             result,
             should_close: false,
+            options,
         }
     }
 
@@ -168,7 +200,10 @@ impl OverlayApp {
         color: Color,
         screen_size: egui::Vec2,
     ) {
-        let hex = color.format(ColorFormat::Hex);
+        let mut hex = color.format(self.options.tooltip_format);
+        if self.options.show_color_name {
+            hex = format!("{hex}  {}", crate::names::nearest_color_name(color));
+        }
 
         // Position tooltip, flip if near edge
         let mut offset_x = TOOLTIP_OFFSET_X;
@@ -269,13 +304,26 @@ impl eframe::App for OverlayApp {
         // Read input
         let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
         let scroll_delta = ctx.input(|i| i.raw_scroll_delta.y);
-        let primary_clicked = ctx.input(|i| i.pointer.primary_clicked());
-        let secondary_clicked = ctx.input(|i| i.pointer.secondary_clicked());
+        let clicked = ctx.input(|i| {
+            if i.pointer.primary_clicked() {
+                Some(self.options.primary_click)
+            } else if i.pointer.button_clicked(egui::PointerButton::Middle) {
+                Some(self.options.middle_click)
+            } else if i.pointer.secondary_clicked() {
+                Some(self.options.secondary_click)
+            } else {
+                None
+            }
+        });
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
 
         // Handle cancel
-        if escape || secondary_clicked {
+        if escape || clicked == Some(ClickAction::Close) {
             self.should_close = true;
+        }
+
+        if self.options.change_cursor {
+            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
         }
 
         // Handle scroll zoom
@@ -310,9 +358,11 @@ impl eframe::App for OverlayApp {
             self.draw_magnifier(&painter, mag_center, px_x, px_y, screen_size);
             self.draw_tooltip(&painter, pos, current_color, screen_size);
 
-            // Pick on left click
-            if primary_clicked && !self.should_close {
-                *self.result.lock().unwrap() = Some(current_color);
+            // Pick on click (action depends on the button)
+            if let Some(action) = clicked
+                && !self.should_close
+            {
+                *self.result.lock().unwrap() = Some((current_color, action));
                 self.should_close = true;
             }
         }
@@ -328,7 +378,18 @@ impl eframe::App for OverlayApp {
 
 /// Run the overlay and return the picked color (or None if cancelled).
 pub fn run_overlay(screenshot: RgbaImage) -> Option<Color> {
-    let result = Arc::new(Mutex::new(None));
+    run_overlay_with(screenshot, OverlayOptions::default())
+        .filter(|(_, a)| *a != ClickAction::Close)
+        .map(|(c, _)| c)
+}
+
+/// Run the overlay and return the picked color together with the click
+/// action of the button used. `None` if cancelled with Esc or a `Close` button.
+pub fn run_overlay_with(
+    screenshot: RgbaImage,
+    options: OverlayOptions,
+) -> Option<(Color, ClickAction)> {
+    let result: OverlayResult = Arc::new(Mutex::new(None));
     let result_clone = result.clone();
 
     let img_w = screenshot.width() as f32;
@@ -369,7 +430,7 @@ pub fn run_overlay(screenshot: RgbaImage) -> Option<Color> {
     let _ = eframe::run_native(
         "Color Picker",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(OverlayApp::new(screenshot, result_clone)))),
+        Box::new(move |_cc| Ok(Box::new(OverlayApp::new(screenshot, result_clone, options)))),
     );
 
     result.lock().unwrap().take()

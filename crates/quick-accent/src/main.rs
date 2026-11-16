@@ -1,3 +1,5 @@
+use mpt_quick_accent::config::{ToolbarPosition, Trigger};
+use mpt_quick_accent::usage::UsageCounts;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -40,6 +42,15 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
     let position = parse_arg(&args, "--position").unwrap_or_else(|| "above-cursor".into());
+    let trigger = parse_arg(&args, "--trigger").unwrap_or_else(|| "space".into());
+    let has_flag = |flag: &str| args.iter().any(|a| a == flag);
+    let options = mpt_quick_accent::overlay::OverlayOptions {
+        position: ToolbarPosition::from_arg(&position),
+        trigger: Trigger::from_arg(&trigger),
+        start_from_left: has_flag("--start-left"),
+        show_description: has_flag("--describe"),
+    };
+    let record_usage = has_flag("--record-usage");
 
     if accents.is_empty() {
         error!("No accent characters provided");
@@ -50,11 +61,14 @@ fn main() {
         "Quick Accent overlay: accents={chars_str}, backspaces={backspaces}, position={position}"
     );
 
-    let selected = mpt_quick_accent::overlay::run_overlay(&accents, &position);
+    let selected = mpt_quick_accent::overlay::run_overlay(&accents, &options);
 
     match selected {
         Some(ch) => {
             info!("Selected: {ch}");
+            if record_usage {
+                UsageCounts::record_and_save(ch);
+            }
 
             // Small delay to let focus return to the original window
             thread::sleep(Duration::from_millis(80));

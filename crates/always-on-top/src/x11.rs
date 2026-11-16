@@ -12,18 +12,22 @@ pub struct FocusedWindow {
 }
 
 /// Get the focused window with metadata needed for the toggle decision.
+/// Prefers EWMH `_NET_ACTIVE_WINDOW` (the client toplevel), falling back to the input focus.
 pub fn get_focused_window() -> Result<FocusedWindow> {
     let (conn, screen_num) = RustConnection::connect(None).context("failed to connect to X11")?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    let focus = conn
-        .get_input_focus()
-        .context("get_input_focus request failed")?
-        .reply()
-        .context("get_input_focus reply failed")?;
-
-    let window = focus.focus;
+    let window = match active_window(&conn, root) {
+        Some(w) => w,
+        None => {
+            conn.get_input_focus()
+                .context("get_input_focus request failed")?
+                .reply()
+                .context("get_input_focus reply failed")?
+                .focus
+        }
+    };
     if window == root || window == 0 {
         anyhow::bail!("no focused window found");
     }
@@ -35,6 +39,80 @@ pub fn get_focused_window() -> Result<FocusedWindow> {
         root,
         wm_class,
     })
+}
+
+fn active_window(conn: &RustConnection, root: u32) -> Option<u32> {
+    let atom = intern_atom(conn, b"_NET_ACTIVE_WINDOW").ok()?;
+    let reply = conn
+        .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    reply.value32()?.next().filter(|&w| w != 0)
+}
+
+/// Whether the window is fullscreen (`_NET_WM_STATE_FULLSCREEN`, or covers the whole root).
+/// Used as the Linux stand-in for Windows Game Mode.
+pub fn is_fullscreen(window: u32, root: u32) -> Result<bool> {
+    let (conn, _) = RustConnection::connect(None).context("failed to connect to X11")?;
+    let state = intern_atom(&conn, b"_NET_WM_STATE")?;
+    let fullscreen = intern_atom(&conn, b"_NET_WM_STATE_FULLSCREEN")?;
+    let reply = conn
+        .get_property(false, window, state, xproto::AtomEnum::ATOM, 0, 64)?
+        .reply()?;
+    if reply
+        .value32()
+        .is_some_and(|mut v| v.any(|a| a == fullscreen))
+    {
+        return Ok(true);
+    }
+    let g = conn.get_geometry(window)?.reply()?;
+    let rg = conn.get_geometry(root)?.reply()?;
+    Ok(g.width >= rg.width && g.height >= rg.height)
+}
+
+/// The window-manager frame of a client (the ancestor that is a direct child of root).
+fn frame_of(conn: &RustConnection, window: u32, root: u32) -> Option<u32> {
+    let mut current = window;
+    for _ in 0..16 {
+        let tree = conn.query_tree(current).ok()?.reply().ok()?;
+        if tree.parent == root || tree.parent == 0 {
+            return Some(current);
+        }
+        current = tree.parent;
+    }
+    None
+}
+
+/// Set `_NET_WM_WINDOW_OPACITY` on a client window (and its WM frame, for
+/// compositors that read it there). `opacity >= 1.0` removes the property.
+pub fn set_window_opacity(window: u32, root: u32, opacity: f32) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None).context("failed to connect to X11")?;
+    let atom = intern_atom(&conn, b"_NET_WM_WINDOW_OPACITY")?;
+    let mut targets = vec![window];
+    if let Some(frame) = frame_of(&conn, window, root)
+        && frame != window
+    {
+        targets.push(frame);
+    }
+    for w in targets {
+        if opacity >= 1.0 {
+            conn.delete_property(w, atom)?;
+        } else {
+            let value = (opacity.clamp(0.0, 1.0) as f64 * u32::MAX as f64) as u32;
+            conn.change_property(
+                xproto::PropMode::REPLACE,
+                w,
+                atom,
+                xproto::AtomEnum::CARDINAL,
+                32,
+                1,
+                &value.to_ne_bytes(),
+            )?;
+        }
+    }
+    conn.flush()?;
+    Ok(())
 }
 
 /// Explicitly set or remove _NET_WM_STATE_ABOVE on the given window.

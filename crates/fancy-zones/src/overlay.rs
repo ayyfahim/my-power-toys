@@ -1,10 +1,9 @@
 use crate::layout::Layout;
+use crate::zone_window::ZoneStyle;
 use eframe::egui;
 use mpt_common::monitor::Monitor;
 use std::sync::{Arc, Mutex};
 
-const ZONE_FILL_ALPHA: u8 = 50;
-const ZONE_FILL_HIGHLIGHT_ALPHA: u8 = 100;
 const ZONE_BORDER_RADIUS: f32 = 8.0;
 const ZONE_NUMBER_FONT_SIZE: f32 = 48.0;
 const LAYOUT_NAME_FONT_SIZE: f32 = 20.0;
@@ -13,16 +12,27 @@ const HINT_FONT_SIZE: f32 = 14.0;
 struct ZoneOverlayApp {
     layout: Layout,
     zone_gap: u32,
+    style: ZoneStyle,
     highlighted: Option<usize>,
     result: Arc<Mutex<Option<usize>>>,
     should_close: bool,
 }
 
+fn color(rgb: (u8, u8, u8), alpha: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(rgb.0, rgb.1, rgb.2, alpha)
+}
+
 impl ZoneOverlayApp {
-    fn new(layout: Layout, zone_gap: u32, result: Arc<Mutex<Option<usize>>>) -> Self {
+    fn new(
+        layout: Layout,
+        zone_gap: u32,
+        style: ZoneStyle,
+        result: Arc<Mutex<Option<usize>>>,
+    ) -> Self {
         Self {
             layout,
             zone_gap,
+            style,
             highlighted: None,
             result,
             should_close: false,
@@ -134,17 +144,16 @@ impl eframe::App for ZoneOverlayApp {
 
             let is_highlighted = self.highlighted == Some(i);
 
-            let fill_alpha = if is_highlighted {
-                ZONE_FILL_HIGHLIGHT_ALPHA
+            let fill = if is_highlighted {
+                color(self.style.highlight, self.style.alpha)
             } else {
-                ZONE_FILL_ALPHA
+                color(self.style.inactive, self.style.alpha)
             };
-            let fill = egui::Color32::from_rgba_unmultiplied(66, 135, 245, fill_alpha);
 
             let stroke_color = if is_highlighted {
-                egui::Color32::from_rgb(100, 160, 255)
+                color(self.style.border, 255)
             } else {
-                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 120)
+                color(self.style.border, 160)
             };
             let stroke_width = if is_highlighted { 3.0 } else { 1.5 };
 
@@ -157,21 +166,19 @@ impl eframe::App for ZoneOverlayApp {
             );
 
             // Zone number label
-            let label = format!("{}", i + 1);
-            let galley = painter.layout_no_wrap(
-                label,
-                egui::FontId::proportional(ZONE_NUMBER_FONT_SIZE),
-                if is_highlighted {
-                    egui::Color32::WHITE
-                } else {
-                    egui::Color32::from_white_alpha(180)
-                },
-            );
-            painter.galley(
-                rect.center() - galley.size() / 2.0,
-                galley,
-                egui::Color32::WHITE,
-            );
+            if self.style.show_numbers {
+                let label = format!("{}", i + 1);
+                let galley = painter.layout_no_wrap(
+                    label,
+                    egui::FontId::proportional(ZONE_NUMBER_FONT_SIZE),
+                    color(self.style.number, 255),
+                );
+                painter.galley(
+                    rect.center() - galley.size() / 2.0,
+                    galley,
+                    egui::Color32::WHITE,
+                );
+            }
         }
 
         // Layout name at top center
@@ -213,6 +220,16 @@ impl eframe::App for ZoneOverlayApp {
 
 /// Run the zone overlay on a specific monitor and return the selected zone index.
 pub fn run_overlay(layout: Layout, zone_gap: u32, monitor: &Monitor) -> Option<usize> {
+    let style = ZoneStyle::from_config(&crate::config::FancyZonesConfig {
+        zone_gap,
+        ..Default::default()
+    });
+    run_overlay_styled(layout, style, monitor)
+}
+
+/// Like [`run_overlay`] with explicit colors (from the config's appearance options).
+pub fn run_overlay_styled(layout: Layout, style: ZoneStyle, monitor: &Monitor) -> Option<usize> {
+    let zone_gap = style.gap;
     let result = Arc::new(Mutex::new(None));
     let result_clone = result.clone();
 
@@ -256,6 +273,7 @@ pub fn run_overlay(layout: Layout, zone_gap: u32, monitor: &Monitor) -> Option<u
             Ok(Box::new(ZoneOverlayApp::new(
                 layout,
                 zone_gap,
+                style,
                 result_clone,
             )))
         }),

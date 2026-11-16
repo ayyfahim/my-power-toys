@@ -32,6 +32,8 @@ impl HostsFile {
     }
 
     pub fn parse_str(content: &str) -> Self {
+        // A UTF-8 byte order mark is not part of the first line.
+        let content = content.strip_prefix('\u{feff}').unwrap_or(content);
         let lines = content.lines().map(parse_line).collect();
         Self { lines }
     }
@@ -107,6 +109,34 @@ impl HostsFile {
             .join("\n")
     }
 
+    /// Serialize for writing to disk, honouring the user's write options
+    /// (leading-space alignment, encoding/BOM, trailing newline).
+    pub fn serialize_with(&self, opts: &WriteOptions) -> Vec<u8> {
+        let any_disabled = self
+            .lines
+            .iter()
+            .any(|l| matches!(l, HostsLine::Entry(e) if !e.enabled));
+        let indent = any_disabled && !opts.no_leading_spaces;
+        let mut out = String::new();
+        if opts.bom {
+            out.push('\u{feff}');
+        }
+        for line in &self.lines {
+            match line {
+                HostsLine::Entry(e) => {
+                    if indent && e.enabled {
+                        out.push_str("  ");
+                    }
+                    out.push_str(&format_entry(e));
+                }
+                HostsLine::Comment(c) => out.push_str(c),
+                HostsLine::Blank => {}
+            }
+            out.push('\n');
+        }
+        out.into_bytes()
+    }
+
     /// Update an existing entry by index (among entries only).
     pub fn update_entry(
         &mut self,
@@ -161,6 +191,96 @@ impl HostsFile {
         fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
+}
+
+/// Options controlling how the hosts file is written.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WriteOptions {
+    /// Write a UTF-8 byte order mark.
+    pub bom: bool,
+    /// Don't indent active entries by two spaces when disabled entries exist.
+    pub no_leading_spaces: bool,
+}
+
+/// Addresses that upstream PowerToys ignores for duplicate detection unless
+/// `LoopbackDuplicates` is enabled.
+const LOOPBACK_ADDRESSES: &[&str] = &[
+    "0.0.0.0",
+    "::",
+    "::0",
+    "0:0:0:0:0:0:0:0",
+    "127.0.0.1",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+];
+
+/// Upstream `Consts.MaxHostsCount`: an address line with this many hosts is
+/// considered "full", so repeating the address is not a duplicate.
+const MAX_HOSTS_COUNT: usize = 9;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddressType {
+    V4,
+    V6,
+    Invalid,
+}
+
+fn address_type(ip: &str) -> AddressType {
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(_)) => AddressType::V4,
+        Ok(std::net::IpAddr::V6(_)) => AddressType::V6,
+        Err(_) => AddressType::Invalid,
+    }
+}
+
+pub fn is_loopback_address(ip: &str) -> bool {
+    LOOPBACK_ADDRESSES
+        .iter()
+        .any(|a| a.eq_ignore_ascii_case(ip))
+}
+
+/// Flag duplicate entries, following upstream `DuplicateService`:
+/// - entries of the same address family sharing at least one hostname
+///   (case-insensitive) are duplicates;
+/// - entries of the same family and address are duplicates when more than one
+///   such entry has fewer than 9 hosts (and this one has fewer than 9);
+/// - loopback/unspecified addresses are never flagged unless
+///   `loopback_duplicates` is true.
+///
+/// Returns one flag per entry, in the same order as `entries`.
+pub fn find_duplicates(entries: &[&HostEntry], loopback_duplicates: bool) -> Vec<bool> {
+    let types: Vec<AddressType> = entries.iter().map(|e| address_type(&e.ip)).collect();
+    let lower_hosts: Vec<Vec<String>> = entries
+        .iter()
+        .map(|e| e.hostnames.iter().map(|h| h.to_lowercase()).collect())
+        .collect();
+
+    (0..entries.len())
+        .map(|i| {
+            let entry = entries[i];
+            if !loopback_duplicates && is_loopback_address(&entry.ip) {
+                return false;
+            }
+            let shares_host = (0..entries.len()).any(|j| {
+                j != i
+                    && types[j] == types[i]
+                    && lower_hosts[i].iter().any(|h| lower_hosts[j].contains(h))
+            });
+            if shares_host {
+                return true;
+            }
+            let same_addr =
+                |j: usize| types[j] == types[i] && entries[j].ip.eq_ignore_ascii_case(&entry.ip);
+            if (0..entries.len()).any(|j| j != i && same_addr(j)) {
+                return entry.hostnames.len() < MAX_HOSTS_COUNT
+                    && (0..entries.len())
+                        .filter(|&j| same_addr(j) && entries[j].hostnames.len() < MAX_HOSTS_COUNT)
+                        .count()
+                        > 1;
+            }
+            false
+        })
+        .collect()
 }
 
 fn parse_line(line: &str) -> HostsLine {
@@ -320,6 +440,87 @@ mod tests {
                 .update_entry(99, "x".into(), vec!["y".into()], None)
                 .is_err()
         );
+    }
+
+    fn entry(ip: &str, hosts: &[&str]) -> HostEntry {
+        HostEntry {
+            ip: ip.into(),
+            hostnames: hosts.iter().map(|h| h.to_string()).collect(),
+            comment: None,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn duplicates_shared_host_same_family() {
+        let a = entry("10.0.0.1", &["foo.local"]);
+        let b = entry("10.0.0.2", &["FOO.local", "bar"]);
+        let c = entry("fe80::1", &["foo.local"]); // other family
+        let d = entry("10.0.0.3", &["baz"]);
+        let dups = find_duplicates(&[&a, &b, &c, &d], false);
+        assert_eq!(dups, vec![true, true, false, false]);
+    }
+
+    #[test]
+    fn duplicates_same_address() {
+        let a = entry("10.0.0.1", &["a"]);
+        let b = entry("10.0.0.1", &["b"]);
+        let c = entry("10.0.0.2", &["c"]);
+        assert_eq!(
+            find_duplicates(&[&a, &b, &c], false),
+            vec![true, true, false]
+        );
+    }
+
+    #[test]
+    fn same_address_full_line_not_duplicate() {
+        let full: Vec<String> = (0..9).map(|i| format!("h{i}")).collect();
+        let full_refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
+        let a = entry("10.0.0.1", &full_refs);
+        let b = entry("10.0.0.1", &["other"]);
+        // Only one entry with < 9 hosts for this address: neither is a duplicate.
+        assert_eq!(find_duplicates(&[&a, &b], false), vec![false, false]);
+    }
+
+    #[test]
+    fn loopback_duplicates_option() {
+        let a = entry("127.0.0.1", &["localhost"]);
+        let b = entry("127.0.0.1", &["localhost"]);
+        assert_eq!(find_duplicates(&[&a, &b], false), vec![false, false]);
+        assert_eq!(find_duplicates(&[&a, &b], true), vec![true, true]);
+        let c = entry("0.0.0.0", &["ads.example"]);
+        let d = entry("10.1.1.1", &["ads.example"]);
+        // Loopback entry itself is not flagged, but the other one still is.
+        assert_eq!(find_duplicates(&[&c, &d], false), vec![false, true]);
+    }
+
+    #[test]
+    fn bom_is_stripped_and_written() {
+        let hosts = HostsFile::parse_str("\u{feff}127.0.0.1\tlocalhost\n");
+        assert_eq!(hosts.entries()[0].ip, "127.0.0.1");
+        let bytes = hosts.serialize_with(&WriteOptions {
+            bom: true,
+            no_leading_spaces: false,
+        });
+        assert_eq!(&bytes[..3], &[0xEF, 0xBB, 0xBF]);
+        let plain = hosts.serialize_with(&WriteOptions::default());
+        assert_eq!(plain, b"127.0.0.1\tlocalhost\n");
+    }
+
+    #[test]
+    fn leading_spaces_when_disabled_entries_exist() {
+        let hosts = HostsFile::parse_str("10.0.0.1 a\n# 10.0.0.2 b\n");
+        let out = String::from_utf8(hosts.serialize_with(&WriteOptions::default())).unwrap();
+        assert_eq!(out, "  10.0.0.1\ta\n# 10.0.0.2\tb\n");
+        let out = String::from_utf8(hosts.serialize_with(&WriteOptions {
+            bom: false,
+            no_leading_spaces: true,
+        }))
+        .unwrap();
+        assert_eq!(out, "10.0.0.1\ta\n# 10.0.0.2\tb\n");
+        // Re-parsing an indented line yields the same entry.
+        let again = HostsFile::parse_str(&out);
+        assert_eq!(again.entries().len(), 2);
     }
 
     #[test]

@@ -2,36 +2,72 @@ use crate::color::{Color, ColorFormat};
 use crate::history::ColorHistory;
 use crate::picker::copy_to_clipboard;
 use eframe::egui;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::theme;
+
+/// Editor options (from `ColorPickerConfig`).
+#[derive(Debug, Clone)]
+pub struct EditorOptions {
+    /// Format cards shown, in order.
+    pub formats: Vec<ColorFormat>,
+    /// Show the nearest color name.
+    pub show_color_name: bool,
+}
+
+impl Default for EditorOptions {
+    fn default() -> Self {
+        Self {
+            formats: vec![
+                ColorFormat::Hex,
+                ColorFormat::Rgb,
+                ColorFormat::Hsl,
+                ColorFormat::Hsv,
+                ColorFormat::Cmyk,
+            ],
+            show_color_name: false,
+        }
+    }
+}
+
+/// How the editor was closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorExit {
+    Closed,
+    /// The user pressed "Pick color": the caller should relaunch the picker.
+    PickAgain,
+}
 
 struct EditorApp {
     current_color: Color,
     history: ColorHistory,
     shades: Vec<Color>,
-    hex_text: String,
-    rgb_text: String,
-    hsl_text: String,
-    hsv_text: String,
-    cmyk_text: String,
+    options: EditorOptions,
+    format_texts: Vec<(ColorFormat, String)>,
+    color_name: &'static str,
     frame_count: u32,
     copied_feedback: Option<(ColorFormat, Instant)>,
+    exit: Arc<Mutex<EditorExit>>,
 }
 
 impl EditorApp {
-    fn new(color: Color, history: ColorHistory) -> Self {
+    fn new(
+        color: Color,
+        history: ColorHistory,
+        options: EditorOptions,
+        exit: Arc<Mutex<EditorExit>>,
+    ) -> Self {
         let mut app = Self {
             current_color: color,
             history,
             shades: Vec::new(),
-            hex_text: String::new(),
-            rgb_text: String::new(),
-            hsl_text: String::new(),
-            hsv_text: String::new(),
-            cmyk_text: String::new(),
+            options,
+            format_texts: Vec::new(),
+            color_name: "",
             frame_count: 0,
             copied_feedback: None,
+            exit,
         };
         app.update_from_color(color);
         app
@@ -40,11 +76,15 @@ impl EditorApp {
     fn update_from_color(&mut self, color: Color) {
         self.current_color = color;
         self.shades = color.shades(12);
-        self.hex_text = color.format(ColorFormat::Hex);
-        self.rgb_text = color.format(ColorFormat::Rgb);
-        self.hsl_text = color.format(ColorFormat::Hsl);
-        self.hsv_text = color.format(ColorFormat::Hsv);
-        self.cmyk_text = color.format(ColorFormat::Cmyk);
+        self.format_texts = self
+            .options
+            .formats
+            .iter()
+            .map(|f| (*f, color.format(*f)))
+            .collect();
+        if self.options.show_color_name {
+            self.color_name = crate::names::nearest_color_name(color);
+        }
     }
 
     fn draw_header(&mut self, ui: &mut egui::Ui) {
@@ -53,6 +93,7 @@ impl EditorApp {
             .inner_margin(egui::Margin::symmetric(theme::INNER_PADDING as i8, 8));
 
         let mut clicked_color = None;
+        let mut pick_clicked = false;
 
         frame.show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -72,7 +113,9 @@ impl EditorApp {
                 );
                 let text_pos = btn_rect.center() - galley.size() / 2.0;
                 ui.painter().galley(text_pos, galley, theme::TEXT_PRIMARY);
-                // TODO: re-launch picker on click
+                if btn_resp.clicked() {
+                    pick_clicked = true;
+                }
 
                 ui.add_space(8.0);
 
@@ -127,6 +170,10 @@ impl EditorApp {
 
         if let Some(color) = clicked_color {
             self.update_from_color(color);
+        }
+        if pick_clicked {
+            *self.exit.lock().unwrap_or_else(|e| e.into_inner()) = EditorExit::PickAgain;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -333,7 +380,7 @@ impl EditorApp {
             egui::FontId::monospace(theme::FONT_FORMAT_VALUE),
             theme::TEXT_FORMAT_VALUE,
         );
-        let value_x = card_rect.left() + theme::CARD_ACCENT_WIDTH + 52.0;
+        let value_x = card_rect.left() + theme::CARD_ACCENT_WIDTH + 80.0;
         let value_y = card_rect.center().y - value_galley.size().y / 2.0;
         ui.painter().galley(
             egui::pos2(value_x, value_y),
@@ -425,41 +472,56 @@ impl eframe::App for EditorApp {
                     .show(ui, |ui| {
                         self.draw_shade_bar(ui);
                     });
+                if self.options.show_color_name {
+                    ui.horizontal(|ui| {
+                        ui.add_space(theme::INNER_PADDING);
+                        ui.label(
+                            egui::RichText::new(self.color_name)
+                                .size(theme::FONT_BODY)
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                    });
+                }
                 ui.add_space(8.0);
 
                 // Main content: gradient strip + format cards
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(theme::INNER_PADDING as i8, 8))
                     .show(ui, |ui| {
-                        let cards_height = (theme::CARD_HEIGHT + 8.0) * 4.0 - 8.0;
+                        let count = self.format_texts.len().max(1) as f32;
+                        let cards_height = (theme::CARD_HEIGHT + 8.0) * count - 8.0;
+                        let visible_height = cards_height
+                            .min(ui.available_height() - 8.0)
+                            .max(theme::CARD_HEIGHT);
 
                         ui.horizontal(|ui| {
                             // Left: vertical gradient strip
-                            let gradient_color = self.draw_gradient_strip(ui, cards_height);
+                            let gradient_color = self.draw_gradient_strip(ui, visible_height);
                             if let Some(color) = gradient_color {
                                 self.update_from_color(color);
                             }
 
                             ui.add_space(12.0);
 
-                            // Right: format cards
-                            ui.vertical(|ui| {
-                                let hex = self.hex_text.clone();
-                                let rgb = self.rgb_text.clone();
-                                let hsl = self.hsl_text.clone();
-                                let hsv = self.hsv_text.clone();
-                                let cmyk = self.cmyk_text.clone();
-
-                                self.draw_format_card(ui, ColorFormat::Hex, "HEX", &hex);
-                                ui.add_space(8.0);
-                                self.draw_format_card(ui, ColorFormat::Rgb, "RGB", &rgb);
-                                ui.add_space(8.0);
-                                self.draw_format_card(ui, ColorFormat::Hsl, "HSL", &hsl);
-                                ui.add_space(8.0);
-                                self.draw_format_card(ui, ColorFormat::Hsv, "HSV", &hsv);
-                                ui.add_space(8.0);
-                                self.draw_format_card(ui, ColorFormat::Cmyk, "CMYK", &cmyk);
-                            });
+                            // Right: format cards (scrollable when many formats are enabled)
+                            egui::ScrollArea::vertical()
+                                .max_height(visible_height)
+                                .show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        let cards = self.format_texts.clone();
+                                        for (i, (format, value)) in cards.iter().enumerate() {
+                                            if i > 0 {
+                                                ui.add_space(8.0);
+                                            }
+                                            self.draw_format_card(
+                                                ui,
+                                                *format,
+                                                format.label(),
+                                                value,
+                                            );
+                                        }
+                                    });
+                                });
                         });
                     });
             });
@@ -473,6 +535,27 @@ impl eframe::App for EditorApp {
 
 /// Open the color editor window.
 pub fn run_editor(color: Color, history: ColorHistory) {
+    if run_editor_with(color, history, EditorOptions::default()) == EditorExit::PickAgain {
+        spawn_picker();
+    }
+}
+
+/// Relaunch this binary in pick mode (used by the editor's "Pick color" button).
+pub fn spawn_picker() {
+    let exe = std::env::current_exe().unwrap_or_else(|_| "mpt-color-picker".into());
+    if let Err(e) = std::process::Command::new(exe)
+        .arg("--pick")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        tracing::warn!("Failed to relaunch color picker: {e}");
+    }
+}
+
+/// Open the color editor window with options; returns how it was closed.
+pub fn run_editor_with(color: Color, history: ColorHistory, options: EditorOptions) -> EditorExit {
+    let exit = Arc::new(Mutex::new(EditorExit::Closed));
+    let exit_clone = exit.clone();
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([theme::WINDOW_WIDTH, theme::WINDOW_HEIGHT])
@@ -487,9 +570,12 @@ pub fn run_editor(color: Color, history: ColorHistory) {
         native_options,
         Box::new(move |cc| {
             setup_visuals(&cc.egui_ctx);
-            Ok(Box::new(EditorApp::new(color, history)))
+            Ok(Box::new(EditorApp::new(
+                color, history, options, exit_clone,
+            )))
         }),
     );
+    *exit.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn setup_visuals(ctx: &egui::Context) {

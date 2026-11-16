@@ -1,6 +1,7 @@
-use crate::config::{HostsEditorConfig, Placement};
+use crate::backup;
+use crate::config::{DeleteBackupsMode, HostsEditorConfig, HostsEncoding, Placement};
 use crate::gui::theme;
-use crate::parser::HostsFile;
+use crate::parser::{HostsFile, WriteOptions, find_duplicates};
 use eframe::egui;
 use std::path::PathBuf;
 use tracing::{info, warn};
@@ -30,6 +31,12 @@ struct HostsEditorApp {
     status: Status,
     frame_count: u32,
     confirm_delete: Option<usize>,
+    // Duplicates / warning / settings
+    duplicates_only: bool,
+    warning_open: bool,
+    warning_dont_show: bool,
+    backup_done: bool,
+    settings_open: bool,
 }
 
 impl HostsEditorApp {
@@ -37,7 +44,6 @@ impl HostsEditorApp {
         Self {
             hosts,
             hosts_path,
-            config,
             filter: String::new(),
             editing: None,
             form_ip: String::new(),
@@ -50,18 +56,37 @@ impl HostsEditorApp {
             status: Status::Idle,
             frame_count: 0,
             confirm_delete: None,
+            duplicates_only: false,
+            warning_open: config.show_startup_warning,
+            warning_dont_show: false,
+            backup_done: false,
+            settings_open: false,
+            config,
         }
+    }
+
+    /// Duplicate flags, one per entry (entries-only indexing).
+    fn duplicate_flags(&self) -> Vec<bool> {
+        find_duplicates(&self.hosts.entries(), self.config.loopback_duplicates)
     }
 
     /// Get filtered entry indices (into the entries-only list).
     fn filtered_indices(&self) -> Vec<usize> {
         let filter_lower = self.filter.to_lowercase();
+        let dups = if self.duplicates_only {
+            self.duplicate_flags()
+        } else {
+            Vec::new()
+        };
         self.hosts
             .entries()
             .iter()
             .enumerate()
-            .filter(|(_, e)| {
+            .filter(|(i, e)| {
                 if !self.config.show_disabled && !e.enabled {
+                    return false;
+                }
+                if self.duplicates_only && !dups.get(*i).copied().unwrap_or(false) {
                     return false;
                 }
                 if filter_lower.is_empty() {
@@ -152,17 +177,22 @@ impl HostsEditorApp {
     }
 
     fn save_file(&mut self) {
-        if self.config.backup_before_save {
-            let timestamp = chrono_timestamp();
-            let backup_path = format!("/tmp/hosts.mpt-backup-{timestamp}");
-            if let Err(e) = std::fs::copy(&self.hosts_path, &backup_path) {
-                warn!("Backup failed: {e}");
-            } else {
-                info!("Backup saved to {backup_path}");
+        // Like upstream, back up the original file once per editing session,
+        // then apply the cleanup policy.
+        if self.config.backup_before_save && !self.backup_done && self.hosts_path.exists() {
+            match backup::create_backup(&self.hosts_path, &self.config) {
+                Ok(_) => {
+                    self.backup_done = true;
+                    backup::cleanup_backups(&self.config);
+                }
+                Err(e) => warn!("Backup failed: {e:#}"),
             }
         }
 
-        let content = self.hosts.serialize();
+        let content = self.hosts.serialize_with(&WriteOptions {
+            bom: self.config.encoding == HostsEncoding::Utf8Bom,
+            no_leading_spaces: self.config.no_leading_spaces,
+        });
 
         match std::fs::write(&self.hosts_path, &content) {
             Ok(()) => {
@@ -243,6 +273,7 @@ impl HostsEditorApp {
                     .desired_width(300.0)
                     .hint_text("Search by IP, hostname or comment..."),
             );
+            ui.checkbox(&mut self.duplicates_only, "Duplicates only");
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let btn = egui::Button::new(
@@ -254,6 +285,20 @@ impl HostsEditorApp {
                 .corner_radius(theme::BUTTON_RADIUS);
                 if ui.add(btn).clicked() {
                     self.open_add_form();
+                }
+                let settings_btn = egui::Button::new(
+                    egui::RichText::new("Settings")
+                        .size(theme::FONT_BUTTON)
+                        .color(theme::TEXT_SECONDARY),
+                )
+                .fill(if self.settings_open {
+                    theme::BG_CHIP_SELECTED
+                } else {
+                    theme::BG_SECONDARY
+                })
+                .corner_radius(theme::BUTTON_RADIUS);
+                if ui.add(settings_btn).clicked() {
+                    self.settings_open = !self.settings_open;
                 }
             });
         });
@@ -308,6 +353,7 @@ impl HostsEditorApp {
 
     fn draw_entry_table(&mut self, ui: &mut egui::Ui) {
         let indices = self.filtered_indices();
+        let dups = self.duplicate_flags();
 
         // Collect actions to apply after drawing
         let mut toggle_idx: Option<usize> = None;
@@ -323,7 +369,10 @@ impl HostsEditorApp {
 
                 for (row_i, &entry_idx) in indices.iter().enumerate() {
                     let entry = entries[entry_idx];
-                    let text_color = if entry.enabled {
+                    let is_dup = dups.get(entry_idx).copied().unwrap_or(false);
+                    let text_color = if is_dup {
+                        theme::TEXT_WARNING
+                    } else if entry.enabled {
                         theme::TEXT_PRIMARY
                     } else {
                         theme::TEXT_MUTED
@@ -342,6 +391,19 @@ impl HostsEditorApp {
                     // Hover highlight
                     if row_resp.hovered() {
                         p.rect_filled(row_rect, 0.0, theme::BG_HOVER);
+                    }
+
+                    // Duplicate marker: thin warning bar on the left edge
+                    if is_dup {
+                        p.rect_filled(
+                            egui::Rect::from_min_size(
+                                row_rect.left_top(),
+                                egui::vec2(3.0, row_rect.height()),
+                            ),
+                            0.0,
+                            theme::TEXT_WARNING,
+                        );
+                        row_resp.clone().on_hover_text("Duplicate entry");
                     }
 
                     // Row click → edit
@@ -504,9 +566,13 @@ impl HostsEditorApp {
                     ui.add_space(40.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            egui::RichText::new("No entries match the filter")
-                                .size(theme::FONT_BODY)
-                                .color(theme::TEXT_MUTED),
+                            egui::RichText::new(if self.hosts.entries().is_empty() {
+                                "No entries"
+                            } else {
+                                "No entries match the filter"
+                            })
+                            .size(theme::FONT_BODY)
+                            .color(theme::TEXT_MUTED),
                         );
                     });
                 }
@@ -716,21 +782,169 @@ impl HostsEditorApp {
     }
 }
 
-fn chrono_timestamp() -> String {
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let s = secs % 60;
-    let m = (secs / 60) % 60;
-    let h = (secs / 3600) % 24;
-    let days = secs / 86400;
-    let year = 1970 + days / 365;
-    let day_of_year = days % 365;
-    let month = day_of_year / 30 + 1;
-    let day = day_of_year % 30 + 1;
-    format!("{year:04}{month:02}{day:02}{h:02}{m:02}{s:02}")
+impl HostsEditorApp {
+    /// Upstream `ShowStartupWarning`: modal warning before editing.
+    fn draw_startup_warning(&mut self, ctx: &egui::Context) {
+        let mut accepted = false;
+        let mut quit = false;
+        egui::Modal::new(egui::Id::new("startup_warning")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.label(
+                egui::RichText::new("Warning")
+                    .size(theme::FONT_SECTION)
+                    .color(theme::TEXT_WARNING)
+                    .strong(),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(
+                    "The hosts file controls how host names are resolved on this system. \
+                     Incorrect entries can break name resolution and network access. \
+                     Only edit it if you know what you are doing.",
+                )
+                .size(theme::FONT_BODY)
+                .color(theme::TEXT_SECONDARY),
+            );
+            ui.add_space(8.0);
+            ui.checkbox(&mut self.warning_dont_show, "Don't show this warning again");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Accept").clicked() {
+                    accepted = true;
+                }
+                if ui.button("Quit").clicked() {
+                    quit = true;
+                }
+            });
+        });
+        if accepted {
+            self.warning_open = false;
+            if self.warning_dont_show {
+                self.config.show_startup_warning = false;
+                self.persist_config();
+            }
+        }
+        if quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn persist_config(&mut self) {
+        if let Err(e) = mpt_common::config::save_module_config("hosts-editor", &self.config) {
+            self.status = Status::Error(format!("Failed to save settings: {e}"));
+        }
+    }
+
+    fn draw_settings(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        egui::Frame::NONE
+            .fill(theme::BG_CARD)
+            .stroke(egui::Stroke::new(1.0, theme::CARD_BORDER))
+            .corner_radius(theme::CARD_RADIUS)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Settings")
+                        .size(theme::FONT_SECTION)
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    changed |= ui
+                        .checkbox(&mut self.config.show_disabled, "Show disabled entries")
+                        .changed();
+                    changed |= ui
+                        .checkbox(
+                            &mut self.config.loopback_duplicates,
+                            "Consider loopback addresses as duplicates",
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut self.config.no_leading_spaces, "No leading spaces")
+                        .on_hover_text(
+                            "Don't indent active lines with two spaces when disabled lines exist",
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(
+                            &mut self.config.show_startup_warning,
+                            "Show startup warning",
+                        )
+                        .changed();
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Encoding:");
+                    changed |= ui
+                        .radio_value(&mut self.config.encoding, HostsEncoding::Utf8, "UTF-8")
+                        .changed();
+                    changed |= ui
+                        .radio_value(
+                            &mut self.config.encoding,
+                            HostsEncoding::Utf8Bom,
+                            "UTF-8 with BOM",
+                        )
+                        .changed();
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .checkbox(&mut self.config.backup_before_save, "Back up before saving")
+                        .changed();
+                    ui.label("Backup folder:");
+                    let hint = crate::config::default_backup_dir()
+                        .to_string_lossy()
+                        .into_owned();
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.config.backup_path)
+                                .desired_width(260.0)
+                                .hint_text(hint),
+                        )
+                        .lost_focus();
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Delete backups:");
+                    for (mode, label) in [
+                        (DeleteBackupsMode::Never, "Never"),
+                        (DeleteBackupsMode::Count, "By count"),
+                        (DeleteBackupsMode::Age, "By age"),
+                    ] {
+                        changed |= ui
+                            .radio_value(&mut self.config.delete_backups_mode, mode, label)
+                            .changed();
+                    }
+                    if self.config.delete_backups_mode == DeleteBackupsMode::Age {
+                        ui.label("older than");
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.config.delete_backups_days)
+                                    .range(1..=3650)
+                                    .suffix(" days"),
+                            )
+                            .changed();
+                    }
+                    if self.config.delete_backups_mode != DeleteBackupsMode::Never {
+                        ui.label(
+                            if self.config.delete_backups_mode == DeleteBackupsMode::Age {
+                                "keep at least"
+                            } else {
+                                "keep"
+                            },
+                        );
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.config.delete_backups_count)
+                                    .range(0..=1000),
+                            )
+                            .changed();
+                    }
+                });
+            });
+        if changed {
+            self.persist_config();
+        }
+    }
 }
 
 impl eframe::App for HostsEditorApp {
@@ -766,6 +980,18 @@ impl eframe::App for HostsEditorApp {
                 self.draw_footer(ui);
             });
 
+        // Settings panel (bottom, above footer)
+        if self.settings_open {
+            egui::TopBottomPanel::bottom("settings")
+                .frame(
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(theme::INNER_MARGIN as i8, 6)),
+                )
+                .show(ctx, |ui| {
+                    self.draw_settings(ui);
+                });
+        }
+
         // Form panel (bottom, above footer, if open)
         if self.form_open {
             egui::TopBottomPanel::bottom("form")
@@ -799,6 +1025,10 @@ impl eframe::App for HostsEditorApp {
 
         if should_validate_form {
             self.validate_and_apply_form();
+        }
+
+        if self.warning_open {
+            self.draw_startup_warning(ctx);
         }
     }
 }

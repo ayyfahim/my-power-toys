@@ -40,6 +40,36 @@ impl SearchEngine {
         if config.providers.settings {
             providers.push(Box::new(settings::SettingsProvider::new()));
         }
+        if config.providers.window_walker {
+            providers.push(Box::new(windows::WindowsProvider::new(
+                config.keywords.window_walker.clone(),
+                config.global_results.window_walker,
+            )));
+        }
+        if config.providers.clipboard_history {
+            providers.push(Box::new(clipboard::ClipboardProvider::new(
+                config.keywords.clipboard_history.clone(),
+            )));
+        }
+        if config.providers.bookmarks {
+            providers.push(Box::new(bookmarks::BookmarksProvider::new(
+                config.keywords.bookmarks.clone(),
+                config.global_results.bookmarks,
+                config.bookmarks.clone(),
+            )));
+        }
+        if config.providers.time_date {
+            providers.push(Box::new(time_date::TimeDateProvider::new(
+                config.keywords.time_date.clone(),
+                config.global_results.time_date,
+            )));
+        }
+        if config.providers.packages {
+            providers.push(Box::new(packages::PackagesProvider::new(
+                config.keywords.packages.clone(),
+                config.package_search.clone(),
+            )));
+        }
 
         let frecency = FrecencyStore::load();
 
@@ -66,7 +96,14 @@ impl SearchEngine {
 
         let mut all_results = Vec::new();
 
+        // A query starting with a provider keyword (e.g. `<`, `clip `) goes
+        // only to the provider(s) owning that keyword.
+        let claimed = self.providers.iter().any(|p| p.keyword_match(raw_query));
+
         for provider in &self.providers {
+            if claimed && !provider.keyword_match(raw_query) {
+                continue;
+            }
             if !provider.matches(raw_query) {
                 continue;
             }
@@ -97,6 +134,15 @@ impl SearchEngine {
         all_results.truncate(self.config.max_results);
 
         all_results
+    }
+
+    /// True when a background provider (package search) has new results
+    /// and the current query should be searched again.
+    pub fn has_async_updates(&self) -> bool {
+        // Poll all providers so every flag is cleared.
+        self.providers
+            .iter()
+            .fold(false, |any, p| p.poll_updates() || any)
     }
 
     pub fn record_activation(&mut self, result: &PaletteResult) {

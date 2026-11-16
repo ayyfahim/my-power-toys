@@ -8,6 +8,7 @@ mod theme;
 mod translations;
 mod types;
 mod views;
+mod views_extra;
 mod widgets;
 
 use iced::theme::Palette;
@@ -230,6 +231,18 @@ impl Settings {
             self.toast_queue.pop_front();
         }
         self.toast_queue.push_back(toast);
+    }
+
+    /// Ask the running Key Manager to re-read its mappings
+    /// (daemon named action `key-manager:reload`).
+    fn reload_key_manager(&self) -> Task<Message> {
+        if !self.daemon_connected {
+            return Task::none();
+        }
+        Task::perform(
+            daemon::daemon_trigger_hotkey("key-manager:reload".into()),
+            |_| Message::RestartModuleResult(()),
+        )
     }
 
     fn show_next_toast(&mut self) {
@@ -638,15 +651,18 @@ impl Settings {
                 self.module_configs.save("color-picker");
             }
             Message::ToggleColorFormat(id, enabled) => {
-                if let Some(entry) = self
-                    .module_configs
-                    .color_picker
-                    .formats
-                    .iter_mut()
-                    .find(|e| e.id == id)
-                {
-                    entry.enabled = enabled;
-                }
+                // Rebuild the list from `format_list()` so formats missing from
+                // older config files (e.g. Oklch) get an entry and can be toggled.
+                let cp = &mut self.module_configs.color_picker;
+                cp.formats = cp
+                    .format_list()
+                    .into_iter()
+                    .map(|(f, on)| mpt_color_picker::ColorFormatEntry {
+                        id: f.id().to_string(),
+                        label: f.label().to_string(),
+                        enabled: if f.id() == id { enabled } else { on },
+                    })
+                    .collect();
                 self.module_configs.save("color-picker");
             }
             Message::SetTextExtractorLang(lang) => {
@@ -654,7 +670,9 @@ impl Settings {
                 self.module_configs.save("text-extractor");
             }
             Message::SetImageResizerPreset(preset) => {
+                // `selected_size` takes precedence over `preset`, so keep them in sync.
                 self.module_configs.image_resizer.preset = preset;
+                self.module_configs.image_resizer.selected_size = preset.default_name().into();
                 self.module_configs.save("image-resizer");
             }
             Message::SetImageResizerFormat(fmt) => {
@@ -932,7 +950,8 @@ impl Settings {
             }
             // Light Switch
             Message::SetLightSwitchSchedule(mode) => {
-                self.module_configs.light_switch.schedule_mode = mode;
+                self.module_configs.light_switch.schedule_mode =
+                    mpt_light_switch::config::ScheduleMode::parse(&mode).unwrap_or_default();
                 self.module_configs.save("light-switch");
             }
             Message::SetLightSwitchLatitude(val) => {
@@ -979,11 +998,13 @@ impl Settings {
             Message::AddKeyMapping(mapping) => {
                 self.module_configs.key_manager.mappings.push(mapping);
                 self.module_configs.save("key-manager");
+                return self.reload_key_manager();
             }
             Message::RemoveKeyMapping(idx) => {
                 if idx < self.module_configs.key_manager.mappings.len() {
                     self.module_configs.key_manager.mappings.remove(idx);
                     self.module_configs.save("key-manager");
+                    return self.reload_key_manager();
                 }
             }
             Message::ToggleKeyMapping(idx, enabled) => {
@@ -991,6 +1012,25 @@ impl Settings {
                     m.enabled = enabled;
                 }
                 self.module_configs.save("key-manager");
+                return self.reload_key_manager();
+            }
+            // Generic fields of the newer modules
+            Message::SetCfgBool(field, v) => {
+                let module = self.module_configs.set_bool(field, v);
+                self.module_configs.save(module);
+            }
+            Message::SetCfgText(field, v) => {
+                if let Some(module) = self.module_configs.set_text(field, v) {
+                    self.module_configs.save(module);
+                }
+            }
+            Message::SetScreenRulerUnits(units) => {
+                self.module_configs.screen_ruler.units_of_measure = units;
+                self.module_configs.save("screen-ruler");
+            }
+            Message::SetGrabModifier(m) => {
+                self.module_configs.grab_and_move.modifier_key = m;
+                self.module_configs.save("grab-and-move");
             }
             // Awake
             Message::SetAwakeMode(mode) => {
